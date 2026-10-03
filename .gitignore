@@ -1,0 +1,10 @@
+# Build output
+/ctxed
+
+# ctxed write outputs
+*.edited.json
+*.edited.jsonl
+*.categories.json
+
+# macOS
+.DS_Store
