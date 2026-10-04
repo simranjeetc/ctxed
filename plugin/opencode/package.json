@@ -1,0 +1,24 @@
+{
+  "name": "ctxed-opencode-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Apply a ctxed prune to OpenCode's outbound transcript at dispatch.",
+  "type": "module",
+  "main": "./src/plugin.ts",
+  "exports": {
+    ".": "./src/plugin.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.22"
+  }
+}
