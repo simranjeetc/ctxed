@@ -24,41 +24,97 @@ cd "$ROOT"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
 # --- configuration (all optional) -------------------------------------------
-OPENCODE_MODEL="${CTXED_TEST_OPENCODE_MODEL:-}"
+# Default to an OpenCode Go model: on this machine only OpenCode Go is entitled
+# for OpenCode, so a silent fallback to whatever `opencode models` lists first
+# (e.g. github-copilot/…) would fail on a fresh clone. Pin an explicit default
+# and fail loudly if it cannot be resolved.
+OPENCODE_MODEL="${CTXED_TEST_OPENCODE_MODEL:-opencode-go/deepseek-v4-flash}"
 CLAUDE_MODEL="${CTXED_TEST_CLAUDE_MODEL:-haiku}"
 KEEP="${CTXED_TEST_KEEP:-0}"
 
+FAILURES=0
+PASSES=0
+SCRATCH=()
+CHECKS=()          # "status<TAB>name<TAB>detail" for the JSON report
+REPORT=""          # optional report path (--report json writes here)
+MODEL_USED=""
+
 RUN_OPENCODE=0
 RUN_CLAUDE=0
+SUITE=""
 
-for arg in "$@"; do
+args=("$@")
+i=0
+while [[ $i -lt ${#args[@]} ]]; do
+  arg="${args[$i]}"
   case "$arg" in
     --opencode) RUN_OPENCODE=1 ;;
     --claude)   RUN_CLAUDE=1 ;;
     --all)      RUN_OPENCODE=1; RUN_CLAUDE=1 ;;
     --keep)     KEEP=1 ;;
+    --report)   i=$((i + 1)); REPORT="${args[$i]:-}" ;;
+    --report=*) REPORT="${arg#--report=}" ;;
     -h|--help)  sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
+  i=$((i + 1))
 done
 
 [[ $RUN_OPENCODE -eq 1 || $RUN_CLAUDE -eq 1 ]] || { echo "pick --opencode, --claude, or --all" >&2; exit 2; }
-
-FAILURES=0
-PASSES=0
-SCRATCH=()
+if [[ $RUN_OPENCODE -eq 1 && $RUN_CLAUDE -eq 1 ]]; then
+  SUITE="all"
+elif [[ $RUN_OPENCODE -eq 1 ]]; then
+  SUITE="opencode"
+else
+  SUITE="claude"
+fi
 
 cleanup() {
   if [[ "$KEEP" == "1" && $FAILURES -gt 0 ]]; then
     echo "kept scratch: ${SCRATCH[*]:- (none)}"
+    [[ -n "$REPORT" ]] && write_report
     return
   fi
   for s in "${SCRATCH[@]:-}"; do rm -rf "$s" 2>/dev/null; done
+  [[ -n "$REPORT" ]] && write_report
 }
 trap cleanup EXIT
 
-pass() { PASSES=$((PASSES + 1)); printf 'ok   %s\n' "$1"; }
-fail() { FAILURES=$((FAILURES + 1)); printf 'FAIL %s\n' "$1"; [[ -n "${2:-}" ]] && printf '     | %s\n' "$2"; return 0; }
+pass() {
+  PASSES=$((PASSES + 1))
+  CHECKS+=("pass	$1	${2:-}")
+  printf 'ok   %s\n' "$1"
+}
+fail() {
+  FAILURES=$((FAILURES + 1))
+  CHECKS+=("fail	$1	${2:-}")
+  printf 'FAIL %s\n' "$1"
+  [[ -n "${2:-}" ]] && printf '     | %s\n' "$2"
+  return 0
+}
+skip_check() { CHECKS+=("skip	$1	${2:-}"); printf 'SKIP %s (%s)\n' "$1" "${2:-}"; }
+
+# Emits the verifier's contract: what ran, what passed, what to do next.
+write_report() {
+  python3 - "$REPORT" "$SUITE" "$MODEL_USED" "$PASSES" "$FAILURES" "${CHECKS[@]}" <<'PY'
+import json, sys
+path, suite, model, passed, failed, *checks = sys.argv[1:]
+rows = []
+for c in checks:
+    parts = c.split("\t")
+    rows.append({"status": parts[0], "name": parts[1], "detail": parts[2] if len(parts) > 2 else ""})
+report = {
+    "suite": suite,
+    "model": model,
+    "passed": int(passed),
+    "failed": int(failed),
+    "ok": int(failed) == 0,
+    "checks": rows,
+}
+open(path, "w").write(json.dumps(report, indent=2))
+PY
+  echo "report: $REPORT"
+}
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing prerequisite: $1 ($2)" >&2; exit 3; }; }
 mkscratch() { local d; d="$(mktemp -d)"; SCRATCH+=("$d"); echo "$d"; }
 
@@ -146,13 +202,12 @@ opencode_scenario() {
     || { fail "opencode:build ctxed (from $src)"; return; }
 
   local model="$OPENCODE_MODEL"
-  if [[ -z "$model" ]]; then
-    model="$(opencode models 2>/dev/null | grep -m1 -E 'go/|gpt-|haiku|flash' || true)"
-  fi
-  if [[ -z "$model" ]]; then
-    fail "opencode:model" "no cheap model resolved; set CTXED_TEST_OPENCODE_MODEL"
+  # Verify the configured model is offered before spending time on a session.
+  if ! opencode models 2>/dev/null | grep -qx "$model"; then
+    fail "opencode:model" "'$model' is not in \`opencode models\`; set CTXED_TEST_OPENCODE_MODEL to an entitled model"
     return
   fi
+  MODEL_USED="$model"
   echo "     model: $model"
 
   local dir; dir="$(mkscratch)"
@@ -238,6 +293,7 @@ claude_scenario() {
     || { fail "claude:build ctxed (from $src)"; return; }
 
   local dir; dir="$(mkscratch)"
+  MODEL_USED="$CLAUDE_MODEL"
 
   # 1. Create a real session with content, captured as JSON to read the id.
   local out="$dir/first.json"
