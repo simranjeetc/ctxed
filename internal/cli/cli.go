@@ -497,6 +497,11 @@ func runCompactInstruction(args []string, stdout, stderr io.Writer) int {
 		return ExitRefused
 	}
 	fmt.Fprintln(stdout, instruction)
+	// The caution goes to stderr, not stdout, so the pasteable sentence stays
+	// clean. It states the guarantee gap at the point of action: this steers
+	// Claude's summary, it does not force the removal the way the OpenCode
+	// flow does.
+	fmt.Fprintln(stderr, "note: this steers Claude's /compact summary; it does not guarantee the dropped topic is removed.")
 	return ExitOK
 }
 

@@ -20,6 +20,34 @@ to — by index, or by high-level category. Compression (replacing a range with 
 summary) and automatic pruning remain out of scope and are tracked in
 [`docs/future-enhancements.md`](docs/future-enhancements.md).
 
+## Two live flows, two different guarantees
+
+Pruning a **running** session is offered on two harnesses, and they do **not**
+promise the same thing. Read the difference before relying on either:
+
+| | OpenCode — live bucket prune | Claude Code — compaction steering |
+| --- | --- | --- |
+| Entry point | `/ctxed-prune` inside the session | `ctxed-prune-context` **skill**, or `ctxed compact-instruction` in a terminal |
+| Stays in session? | Yes — pick buckets, done | Yes with the skill (the agent runs the commands); the terminal flow leaves the session |
+| What it does | Drops the named messages **by id** | Asks Claude's `/compact` to drop the named buckets |
+| Guarantee | **Exact** — the named messages are gone | **Best-effort** — the summary is steered, not forced |
+
+In Claude Code the recommended path is the **`ctxed-prune-context` skill**
+([`.claude/skills/ctxed-prune-context/`](.claude/skills/ctxed-prune-context/)):
+say *"drop the adapter topic"*, the agent finds the transcript, runs the
+commands, and gives you the `/compact` sentence to paste. It needs
+`categorize`'s model to be configured (see
+[Model configuration](#model-configuration)) and it inherits the best-effort
+ceiling — it automates the plumbing, not the guarantee.
+
+If you need a dropped topic to be *provably* absent, use the OpenCode flow. The
+Claude Code flow biases a summary toward your intent; it does not guarantee a
+specific entry is removed. Both leave the **stored** session untouched.
+
+**Why not just restart?** A restart throws away the whole thread. This drops one
+topic and keeps the rest — the thread, the decisions, and the working context
+survive. If that isn't worth it to you, a restart is simpler and you should use it.
+
 ## Build
 
 ```sh
@@ -98,6 +126,9 @@ category, move an entry, or pull one out. `categorize` never drops anything.
 
 ### prune — apply a selection, non-destructively
 
+> **Guarantee: exact.** The selected entries are removed by id; the named
+> messages are gone from the outbound transcript.
+
 `prune` emits the transcript with the selected entries excluded, on stdout. It
 does not touch the session and does not create a new one:
 
@@ -112,6 +143,17 @@ orphan a tool result, ctxed drops the dependent entry too and reports it on
 stderr as an `adjustment:` line.
 
 ### compact-instruction — prune a live Claude Code session
+
+> **Guarantee: best-effort.** This steers Claude's `/compact`; it does **not**
+> force a specific entry to be removed the way the OpenCode flow does. Use it to
+> bias a summary toward your intent, not to prove a topic is gone.
+
+**Prefer the skill.** In a Claude Code session, the `ctxed-prune-context` skill
+([`.claude/skills/ctxed-prune-context/`](.claude/skills/ctxed-prune-context/))
+wraps the steps below: say *"drop the adapter topic"* and the agent finds the
+transcript, runs `categorize`, shows you the buckets, and hands you the
+`/compact` sentence. Use `compact-instruction` directly when you are driving by
+hand from a terminal.
 
 Claude Code cannot rewrite the outbound request from a hook, so its live prune
 uses compaction instead. `compact-instruction` turns a category selection into a
@@ -164,6 +206,15 @@ of its own. The stored session is still never written. See
 ctxed categorize session.json --model gpt-4o \
     --base-url https://api.openai.com/v1 --api-key "$OPENAI_API_KEY"
 ctxed categorize session.json --categorizer-cmd 'llm -m gpt-4o'  # prompt on stdin, response on stdout
+```
+
+For this machine there is a ready wrapper that needs **no API key** — it asks an
+OpenCode Go model the machine is already entitled to:
+
+```sh
+ctxed categorize session.json \
+    --categorizer-cmd "$PWD/scripts/ctxed-categorizer-opencode.sh"
+# override the model with CTXED_CATEGORIZER_MODEL (default opencode-go/deepseek-v4-flash)
 ```
 
 Environment fallbacks: `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `CTXED_MODEL`. The

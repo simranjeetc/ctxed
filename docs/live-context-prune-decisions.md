@@ -120,6 +120,13 @@ re-login. Relevant only to the rejected file-copy approach.
   - D3a (first, ships now): `ctxed` generates a `/compact` instruction from the
     selected buckets; the user runs `/compact <instruction>` in the session.
     Zero harness integration, live, same session. Model-mediated.
+  - D3a′ (the recommended entry point): a **Claude Code skill**
+    (`.claude/skills/ctxed-prune-context/`) wraps D3a. The agent finds the
+    transcript, runs `categorize`, shows the buckets, and hands the user the
+    sentence to paste — so the user never leaves the session or learns the CLI.
+    It removes the terminal detour (audit A1) and the discoverability gap (A4),
+    but inherits D3a's ceiling: still best-effort, still model-mediated, and
+    `/compact` still runs only between turns and only when the user types it.
   - D3b (follow-up): a Claude Code mod whose `session.compact` hook classifies
     the live message list into buckets, drops the selected buckets, and returns
     the kept list — optionally summarising chosen buckets via `next`. Exact,

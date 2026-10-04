@@ -544,8 +544,10 @@ func TestCompactInstructionByCategory(t *testing.T) {
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}
-	if stderr != "" {
-		t.Fatalf("unexpected stderr: %q", stderr)
+	// The guarantee-gap caution goes to stderr, so the pasteable sentence on
+	// stdout stays clean.
+	if !strings.Contains(stderr, "does not guarantee") {
+		t.Fatalf("expected the best-effort caution on stderr, got %q", stderr)
 	}
 	line := strings.TrimSpace(stdout)
 	if strings.Count(stdout, "\n") != 1 {
