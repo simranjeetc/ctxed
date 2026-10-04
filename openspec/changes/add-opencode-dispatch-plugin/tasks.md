@@ -17,35 +17,35 @@
 
 ## 2. Plugin: in-session categorize and select
 
-- [ ] 2.1 Scaffold `plugin/opencode/` with a pinned `@opencode/plugin` (the v2
+- [x] 2.1 Scaffold `plugin/opencode/` with a pinned `@opencode/plugin` (the v2
       API that exposes `session.hook` and command registration); verify OpenCode
       loads it without error
-- [ ] 2.2 Register an in-session command that serializes the live messages,
+- [x] 2.2 Register an in-session command that serializes the live messages,
       hands them to ctxed on stdin, gets the buckets, and presents them with
       labels; verify with a stub ctxed
-- [ ] 2.3 Record the user's bucket selection as the session's active selection
+- [x] 2.3 Record the user's bucket selection as the session's active selection
       (ids remain internal); verify the selection is stored and readable
-- [ ] 2.4 Implement fail-open on the command path: a ctxed failure leaves the
+- [x] 2.4 Implement fail-open on the command path: a ctxed failure leaves the
       session unchanged and reports the error; verify with a stub
 
 ## 3. Plugin: apply the selection at dispatch
 
-- [ ] 3.1 Implement the hook body: re-derive the dropped set over the live
+- [x] 3.1 Implement the hook body: re-derive the dropped set over the live
       transcript via ctxed in id-only mode with the active selection, and parse
       `droppedIds`; verify with a stub ctxed
-- [ ] 3.2 Filter by id over the outbound messages, preserving order and
+- [x] 3.2 Filter by id over the outbound messages, preserving order and
       unrelated messages; verify dropped ids are removed and others are untouched
-- [ ] 3.3 Implement fail-open on the dispatch path: on a stub that exits
+- [x] 3.3 Implement fail-open on the dispatch path: on a stub that exits
       non-zero, hangs, or prints invalid JSON, the transcript is unchanged and
       the error is reported; verify each case
-- [ ] 3.4 Cache the dropped set keyed by selection and session revision; verify a
+- [x] 3.4 Cache the dropped set keyed by selection and session revision; verify a
       second dispatch does not re-invoke ctxed and a changed selection does
-- [ ] 3.5 Implement configuration (ctxed path, categorizer model/transport,
+- [x] 3.5 Implement configuration (ctxed path, categorizer model/transport,
       selection) from config/env, and document it; verify the documented config
       drives the plugin in the stub test
-- [ ] 3.6 Add the concrete OpenCode example to `docs/plugin-contract.md`; verify
+- [x] 3.6 Add the concrete OpenCode example to `docs/plugin-contract.md`; verify
       it matches the implemented hook, command, and flags
-- [ ] 3.7 Verify the plugin carries no policy: assert its source contains no
+- [x] 3.7 Verify the plugin carries no policy: assert its source contains no
       categorization, bucket-assignment, selection-resolution, or
       tool-call/result validity logic
 

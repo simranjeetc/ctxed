@@ -6,14 +6,23 @@ import { join } from "node:path"
 import {
   applyPrune,
   buildArgs,
+  buildCategorizeArgs,
+  categorizeLive,
+  extractJsonObject,
   filterMessages,
+  formatBuckets,
   loadConfig,
+  parseBuckets,
   parseDroppedIds,
+  parseSelection,
+  parseSelectionInput,
   PruneCache,
   runCtxed,
+  selectionKey,
   sessionRevision,
   type PluginConfig,
   type Runner,
+  type Selection,
 } from "../src/core.ts"
 
 /** Writes an executable stub that stands in for the real ctxed binary. */
@@ -29,11 +38,19 @@ function config(overrides: Partial<PluginConfig> = {}): PluginConfig {
   return {
     enabled: true,
     ctxedPath: "ctxed",
-    sessionExport: "/tmp/session.json",
-    categoriesFile: "/tmp/cats.json",
-    categories: "1",
-    ids: "",
+    categorizerCmd: "",
+    categorizerModel: "",
+    maxCategories: "",
     timeoutMs: 1000,
+    ...overrides,
+  }
+}
+
+function selection(overrides: Partial<Selection> = {}): Selection {
+  return {
+    categoriesFile: "/tmp/cats.json",
+    categoryIds: "1",
+    selectedAt: "2026-10-04T00:00:00.000Z",
     ...overrides,
   }
 }
@@ -47,11 +64,11 @@ function countingRunner(output = '{"droppedIds":["b"]}'): { run: Runner; calls: 
   return { run, calls: () => calls }
 }
 
-test("buildArgs invokes ctxed in id-only mode for a category selection", () => {
-  assert.deepEqual(buildArgs(config()), [
+test("buildArgs invokes prune in id-only mode over stdin with the selection", () => {
+  assert.deepEqual(buildArgs(config(), selection()), [
     "ctxed",
     "prune",
-    "/tmp/session.json",
+    "-",
     "--categories-file",
     "/tmp/cats.json",
     "--categories",
@@ -60,9 +77,12 @@ test("buildArgs invokes ctxed in id-only mode for a category selection", () => {
   ])
 })
 
-test("buildArgs invokes ctxed in id-only mode for explicit ids", () => {
-  const args = buildArgs(config({ categoriesFile: "", categories: "", ids: "msg_a,msg_b" }))
-  assert.deepEqual(args, ["ctxed", "prune", "/tmp/session.json", "--ids", "msg_a,msg_b", "--ids-only"])
+test("buildCategorizeArgs categorizes stdin and prints the file to stdout", () => {
+  assert.deepEqual(buildCategorizeArgs(config()), ["ctxed", "categorize", "-", "--out", "-"])
+  assert.deepEqual(
+    buildCategorizeArgs(config({ categorizerCmd: "llm -m x", categorizerModel: "gpt", maxCategories: "4" })),
+    ["ctxed", "categorize", "-", "--categorizer-cmd", "llm -m x", "--model", "gpt", "--max-categories", "4", "--out", "-"],
+  )
 })
 
 test("filterMessages removes only dropped ids and preserves order", () => {
@@ -101,36 +121,32 @@ test("loadConfig reads configuration from env", () => {
     {},
     {
       CTXED_PLUGIN_CTXED_PATH: "/usr/local/bin/ctxed",
-      CTXED_PLUGIN_SESSION_EXPORT: "/sessions/s.json",
-      CTXED_PLUGIN_CATEGORIES_FILE: "/sessions/s.categories.json",
-      CTXED_PLUGIN_CATEGORIES: "2,3",
+      CTXED_PLUGIN_CATEGORIZER_CMD: "llm -m gpt",
+      CTXED_PLUGIN_CATEGORIZER_MODEL: "gpt-4o",
+      CTXED_PLUGIN_MAX_CATEGORIES: "4",
       CTXED_PLUGIN_TIMEOUT_MS: "250",
     },
   )
   assert.equal(cfg.enabled, true)
   assert.equal(cfg.ctxedPath, "/usr/local/bin/ctxed")
-  assert.equal(cfg.sessionExport, "/sessions/s.json")
-  assert.equal(cfg.categoriesFile, "/sessions/s.categories.json")
-  assert.equal(cfg.categories, "2,3")
+  assert.equal(cfg.categorizerCmd, "llm -m gpt")
+  assert.equal(cfg.categorizerModel, "gpt-4o")
+  assert.equal(cfg.maxCategories, "4")
   assert.equal(cfg.timeoutMs, 250)
 })
 
-test("loadConfig lets options override env and detects missing selection", () => {
+test("loadConfig lets options override env and defaults the binary to PATH", () => {
   const cfg = loadConfig(
-    { categories: "9", timeoutMs: 50 },
+    { categorizerModel: "haiku", timeoutMs: 50 },
     {
-      CTXED_PLUGIN_SESSION_EXPORT: "/s.json",
-      CTXED_PLUGIN_CATEGORIES_FILE: "/c.json",
-      CTXED_PLUGIN_CATEGORIES: "2",
+      CTXED_PLUGIN_CATEGORIZER_MODEL: "gpt-4o",
       CTXED_PLUGIN_TIMEOUT_MS: "900",
     },
   )
-  assert.equal(cfg.categories, "9")
+  assert.equal(cfg.categorizerModel, "haiku")
   assert.equal(cfg.timeoutMs, 50)
   assert.equal(cfg.ctxedPath, "ctxed", "binary defaults to PATH lookup")
-
-  assert.equal(loadConfig({}, { CTXED_PLUGIN_SESSION_EXPORT: "/s.json" }).enabled, false)
-  assert.equal(loadConfig({}, {}).enabled, false)
+  assert.equal(loadConfig({}, {}).enabled, true, "the plugin is always available")
 })
 
 test("sessionRevision tracks the message id set", () => {
@@ -144,9 +160,10 @@ test("applyPrune filters messages using a stub ctxed", async () => {
   const result = await applyPrune({
     messages: [{ id: "a" }, { id: "b" }, { id: "c" }],
     config: cfg,
+    selection: selection(),
     revision: "a|b|c",
     cache: new PruneCache(),
-    run: (args) => runCtxed(args, cfg.timeoutMs),
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
     report: () => {},
   })
   assert.deepEqual(
@@ -157,11 +174,35 @@ test("applyPrune filters messages using a stub ctxed", async () => {
   assert.equal(result.error, undefined)
 })
 
-test("applyPrune is a no-op when no selection is configured", async () => {
+test("applyPrune sends the live transcript to ctxed on stdin", async () => {
+  // The stub echoes its stdin, which proves the transcript is piped through and
+  // carries the live message ids ctxed needs to resolve.
+  const path = stubCtxed('#!/bin/sh\ntranscript=$(cat)\ncase "$transcript" in *msg_a*) echo \'{"droppedIds":["msg_a"]}\';; *) echo \'{"droppedIds":[]}\';; esac\n')
+  const cfg = config({ ctxedPath: path })
+  const result = await applyPrune({
+    messages: [
+      { id: "msg_a", role: "user", content: [{ type: "text", text: "drop me" }] },
+      { id: "msg_b", role: "assistant", content: [{ type: "text", text: "keep me" }] },
+    ],
+    config: cfg,
+    selection: selection(),
+    revision: "msg_a|msg_b",
+    cache: new PruneCache(),
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
+    report: () => {},
+  })
+  assert.deepEqual(
+    result.messages.map((m) => m.id),
+    ["msg_b"],
+  )
+})
+
+test("applyPrune is a no-op when the plugin is disabled", async () => {
   const { run, calls } = countingRunner()
   const result = await applyPrune({
     messages: [{ id: "a" }],
     config: config({ enabled: false }),
+    selection: selection(),
     revision: "a",
     cache: new PruneCache(),
     run,
@@ -181,9 +222,10 @@ test("applyPrune is fail-open on a non-zero exit", async () => {
   const result = await applyPrune({
     messages: [{ id: "a" }, { id: "b" }],
     config: cfg,
+    selection: selection(),
     revision: "a|b",
     cache: new PruneCache(),
-    run: (args) => runCtxed(args, cfg.timeoutMs),
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
     report: (message) => reports.push(message),
   })
   assert.match(result.error ?? "", /exited 1/)
@@ -201,9 +243,10 @@ test("applyPrune is fail-open on unparseable output", async () => {
   const result = await applyPrune({
     messages: [{ id: "a" }],
     config: cfg,
+    selection: selection(),
     revision: "a",
     cache: new PruneCache(),
-    run: (args) => runCtxed(args, cfg.timeoutMs),
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
     report: (message) => reports.push(message),
   })
   assert.match(result.error ?? "", /could not be parsed/)
@@ -221,9 +264,10 @@ test("applyPrune is fail-open when ctxed hangs", async () => {
   const result = await applyPrune({
     messages: [{ id: "a" }],
     config: cfg,
+    selection: selection(),
     revision: "a",
     cache: new PruneCache(),
-    run: (args) => runCtxed(args, cfg.timeoutMs),
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
     report: (message) => reports.push(message),
   })
   assert.match(result.error ?? "", /timed out/)
@@ -238,7 +282,7 @@ test("applyPrune caches by selection and revision", async () => {
   const { run, calls } = countingRunner()
   const cache = new PruneCache()
   const cfg = config()
-  const opts = { config: cfg, cache, run, report: () => {} }
+  const opts = { config: cfg, selection: selection(), cache, run, report: () => {} }
   const first = await applyPrune({ messages: [{ id: "a" }, { id: "b" }], revision: "a|b", ...opts })
   assert.equal(first.cached, false)
   assert.equal(calls(), 1)
@@ -253,7 +297,8 @@ test("applyPrune caches by selection and revision", async () => {
   await applyPrune({
     messages: [{ id: "a" }],
     revision: "a",
-    config: config({ categories: "2" }),
+    config: cfg,
+    selection: selection({ categoryIds: "2" }),
     cache,
     run,
     report: () => {},
@@ -261,9 +306,97 @@ test("applyPrune caches by selection and revision", async () => {
   assert.equal(calls(), 3, "a changed selection must refresh")
 })
 
+test("PruneCache.clear drops cached entries", () => {
+  const cache = new PruneCache()
+  cache.set("k", ["a"])
+  assert.equal(cache.size, 1)
+  cache.clear()
+  assert.equal(cache.size, 0)
+  assert.equal(cache.get("k"), undefined)
+})
+
 test("runCtxed returns stdout and exit code", async () => {
   const path = stubCtxed('#!/bin/sh\necho \'{"droppedIds":["z"]}\'\n')
-  const result = await runCtxed([path, "prune", "/s.json", "--ids", "z", "--ids-only"], 500)
+  const result = await runCtxed([path, "prune", "-", "--ids", "z", "--ids-only"], 500)
   assert.equal(result.code, 0)
   assert.match(result.stdout, /droppedIds/)
+})
+
+// --- command path: buckets, selection, categorize ---------------------------
+
+test("parseBuckets reads only what a human sees", () => {
+  const buckets = parseBuckets(
+    JSON.stringify({
+      categories: [
+        { id: 1, label: "Design", entryIds: ["msg_secret"], entryCount: 2, tokens: 10 },
+        { id: 2, label: "Impl", entryIds: ["msg_other"], entryCount: 1, tokens: 20 },
+      ],
+    }),
+  )
+  assert.deepEqual(buckets, [
+    { id: 1, label: "Design", entryCount: 2, tokens: 10 },
+    { id: 2, label: "Impl", entryCount: 1, tokens: 20 },
+  ])
+})
+
+test("parseBuckets rejects a non-categories document", () => {
+  for (const bad of ["not json", "[]", "{}"]) {
+    assert.throws(() => parseBuckets(bad), /categor/i, `should reject: ${bad}`)
+  }
+})
+
+test("formatBuckets never prints entry ids", () => {
+  const text = formatBuckets([{ id: 1, label: "Design", entryCount: 2, tokens: 10 }])
+  assert.match(text, /Design/)
+  assert.ok(!text.includes("msg_"), "no message id may appear in the presentation")
+})
+
+test("categorizeLive runs ctxed and parses the buckets from stdout", async () => {
+  const path = stubCtxed(
+    '#!/bin/sh\ncat >/dev/null\necho \'{"categories":[{"id":1,"label":"A","entryCount":1,"tokens":3},{"id":2,"label":"B","entryCount":1,"tokens":4}]}\'\n',
+  )
+  const cfg = config({ ctxedPath: path })
+  const result = await categorizeLive({
+    transcript: JSON.stringify({ messages: [{ id: "msg_a", type: "user", content: [{ type: "text", text: "hi" }] }] }),
+    config: cfg,
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
+  })
+  assert.equal(result.error, undefined)
+  assert.deepEqual(
+    result.buckets.map((b) => b.label),
+    ["A", "B"],
+  )
+})
+
+test("categorizeLive is fail-open on a non-zero exit", async () => {
+  const path = stubCtxed("#!/bin/sh\ncat >/dev/null\necho 'nope' >&2\nexit 3\n")
+  const cfg = config({ ctxedPath: path })
+  const result = await categorizeLive({
+    transcript: "{}",
+    config: cfg,
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
+  })
+  assert.match(result.error ?? "", /exited 3/)
+  assert.deepEqual(result.buckets, [])
+})
+
+test("extractJsonObject pulls the JSON document out of mixed output", () => {
+  assert.equal(extractJsonObject('table text\n{"a":1}\n'), '{"a":1}')
+  assert.equal(extractJsonObject("no json here"), undefined)
+})
+
+test("selection round-trips through parseSelection", () => {
+  const key = selectionKey("ses_abc")
+  assert.match(key, /ses_abc/)
+  const parsed = parseSelection({ categoriesFile: "/tmp/c.json", categoryIds: "1,3", selectedAt: "t" })
+  assert.deepEqual(parsed, { categoriesFile: "/tmp/c.json", categoryIds: "1,3", selectedAt: "t" })
+  assert.equal(parseSelection(undefined), undefined)
+  assert.equal(parseSelection({ categoriesFile: "/tmp/c.json" }), undefined, "a selection needs category ids")
+})
+
+test("parseSelectionInput accepts bucket ids and nothing else", () => {
+  assert.deepEqual(parseSelectionInput("1,3"), ["1", "3"])
+  assert.deepEqual(parseSelectionInput("1 3 5"), ["1", "3", "5"])
+  assert.deepEqual(parseSelectionInput(""), [])
+  assert.deepEqual(parseSelectionInput("msg_abc"), [], "message ids are not selectable")
 })

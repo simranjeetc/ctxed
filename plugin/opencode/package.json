@@ -16,9 +16,14 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "build": "esbuild src/plugin.ts --bundle --format=esm --platform=node --external:@opencode/plugin --outfile=dist/ctxed-prune.js",
+    "loadcheck": "node scripts/loadcheck.mjs"
   },
   "dependencies": {
     "@opencode/plugin": "2.0.22"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

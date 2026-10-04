@@ -1,18 +1,27 @@
 # ctxed — OpenCode dispatch plugin
 
-Applies a [ctxed](../../README.md) prune to OpenCode's outbound transcript at
-dispatch. It is non-destructive, fail-open, and holds no prune policy of its
-own: it asks ctxed for the set of dropped entry ids, removes matching live
-messages by id, and does nothing else.
+Runs the whole ctxed prune workflow inside a running OpenCode session: it
+categorizes the **live** conversation into topic buckets, lets you pick buckets
+to drop, and removes their messages from every subsequent request. It is
+non-destructive, fail-open, and holds no prune policy of its own — it asks ctxed
+for the buckets and the dropped ids, and does what ctxed says.
 
 ## How it works
 
-1. On each dispatch, OpenCode runs the plugin's `session.hook("context")`
-   handler with the live message list.
-2. The plugin invokes `ctxed prune <session-export> … --ids-only`, which prints
-   `{"droppedIds":[…]}` — the resolved drop set, after orphan resolution.
-3. It removes every live message whose `id` is in that set, preserving order and
-   every other message. Stored history is never touched.
+1. In-session, you run `/ctxed-prune`. The plugin reads the live conversation
+   (`session.context`), hands it to ctxed on stdin, and prints the buckets:
+   labels only — never message ids.
+2. You pick buckets: `/ctxed-prune 2,4`. The plugin records that selection for
+   the session.
+3. On every dispatch, OpenCode runs the plugin's `session.hook("context")`
+   handler with the live message list. The plugin re-derives the dropped set
+   over the **live** transcript (`ctxed prune - … --ids-only`), removes matching
+   messages by id, and leaves everything else untouched. Stored history is never
+   written.
+
+Because the dropped set is re-derived on each dispatch, a message added after
+you made the selection is covered by it too — the session does not drift out of
+the selection.
 
 Any ctxed failure — non-zero exit, timeout, or unparseable output — leaves the
 transcript unchanged and logs the error. Pruning is an optimization; it never
@@ -23,31 +32,34 @@ message ids), so repeated dispatches do not re-invoke ctxed.
 
 ## Requirements
 
-- OpenCode with the v2 plugin API (`ctx.session.hook`).
+- OpenCode with the v2 plugin API (`ctx.session.hook`, `ctx.command.transform`).
 - `ctxed` on `PATH`, or a configured path (see below).
-- A session export produced by `opencode session export <session-id>`, and a
-  selection: either a categories file plus category ids, or explicit entry ids.
-  See [the plugin contract](../../docs/plugin-contract.md#id-only-prune-output).
+- A categorizer for the `/ctxed-prune` step: a `--categorizer-cmd`, or a model.
 
-## Package
+## Build
 
-`package.json` pins `@opencode/plugin` (the OpenCode v2 plugin package that
-exposes `session.hook`). The earlier `@opencode-ai/plugin` package is the v1
-API, which has no `session.hook` seam.
+OpenCode loads a local plugin as a **single flat file** under
+`.opencode/plugins/` — it does not scan a subdirectory. The plugin is therefore
+bundled before install:
+
+```sh
+npm install
+npm run build          # esbuild → dist/ctxed-prune.js
+```
+
+`@opencode/plugin` stays external; OpenCode resolves it from the project's
+`.opencode/node_modules` at load time.
 
 ## Install
 
-OpenCode loads local plugins from `.opencode/plugins/` and installs their
-dependencies from `.opencode/package.json` with Bun at startup.
-
 ```sh
-# from your project root
+# from your project root, with an opencode.json present
 mkdir -p .opencode/plugins
-cp -R <ctxed>/plugin/opencode .opencode/plugins/ctxed
+cp <ctxed>/plugin/opencode/dist/ctxed-prune.js .opencode/plugins/ctxed-prune.js
 ```
 
-Add the dependency to your OpenCode config directory's `package.json` (this is
-the file OpenCode runs `bun install` against):
+Add the API dependency to the directory OpenCode installs from
+(`.opencode/package.json`):
 
 ```json
 {
@@ -55,20 +67,22 @@ the file OpenCode runs `bun install` against):
 }
 ```
 
+OpenCode discovers a newly added plugin asynchronously; `opencode plugin list`
+may say "No plugins found" for a few seconds. A load failure is **silent** in a
+normal run — check with `--print-logs --log-level debug`.
+
 ## Configure
 
 Configuration is read from plugin options first, then from environment
-variables. If the session export or the selection is missing, the plugin is a
-no-op.
+variables.
 
-| Option          | Environment variable             | Meaning                                                            |
-| --------------- | -------------------------------- | ------------------------------------------------------------------ |
-| `ctxedPath`     | `CTXED_PLUGIN_CTXED_PATH`        | Path to the ctxed binary (default: `ctxed`, resolved on `PATH`).   |
-| `sessionExport` | `CTXED_PLUGIN_SESSION_EXPORT`    | Path to `opencode session export` JSON.                            |
-| `categoriesFile`| `CTXED_PLUGIN_CATEGORIES_FILE`   | Categories file from `ctxed categorize`.                           |
-| `categories`    | `CTXED_PLUGIN_CATEGORIES`        | Comma-separated category ids to drop (with `categoriesFile`).      |
-| `ids`           | `CTXED_PLUGIN_IDS`               | Comma-separated entry ids to drop (alternative to categories).     |
-| `timeoutMs`     | `CTXED_PLUGIN_TIMEOUT_MS`        | Hard timeout per ctxed invocation (default: 2000).                 |
+| Option             | Environment variable              | Meaning                                                          |
+| ------------------ | --------------------------------- | ---------------------------------------------------------------- |
+| `ctxedPath`        | `CTXED_PLUGIN_CTXED_PATH`         | Path to the ctxed binary (default: `ctxed`, resolved on `PATH`). |
+| `categorizerCmd`   | `CTXED_PLUGIN_CATEGORIZER_CMD`    | Command ctxed runs to categorize (prompt on its stdin).          |
+| `categorizerModel` | `CTXED_PLUGIN_CATEGORIZER_MODEL`  | Model name, when the categorizer is a model endpoint.            |
+| `maxCategories`    | `CTXED_PLUGIN_MAX_CATEGORIES`     | Maximum number of buckets to ask ctxed for.                      |
+| `timeoutMs`        | `CTXED_PLUGIN_TIMEOUT_MS`         | Hard timeout per ctxed invocation (default: 2000).               |
 
 Plugin options in `opencode.json`:
 
@@ -76,12 +90,10 @@ Plugin options in `opencode.json`:
 {
   "plugins": [
     {
-      "package": "./.opencode/plugins/ctxed",
+      "package": "./.opencode/plugins/ctxed-prune.js",
       "options": {
         "ctxedPath": "/usr/local/bin/ctxed",
-        "sessionExport": "/tmp/session.json",
-        "categoriesFile": "/tmp/session.categories.json",
-        "categories": "2,3"
+        "categorizerModel": "opencode-go/deepseek-v4-flash"
       }
     }
   ]
@@ -91,8 +103,11 @@ Plugin options in `opencode.json`:
 ## Develop
 
 ```sh
-node --test test/          # offline; uses stub ctxed binaries, no network
+npm test               # node --test: id filter, fail-open, caching, serialization, no policy
+npm run loadcheck      # bundle + load a real OpenCode session; asserts the plugin loads
 ```
 
 The tests exercise the id filter, fail-open behavior (non-zero exit, hang,
-invalid JSON), caching, configuration, and the absence of policy in the source.
+invalid JSON), caching, configuration, both live-message encodings, and the
+absence of policy in the source. `loadcheck` is the mandatory live check: a
+plugin can fail to load silently.

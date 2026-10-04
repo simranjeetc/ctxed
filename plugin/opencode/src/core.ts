@@ -5,25 +5,31 @@
 // that set. Every decision — grouping entries, resolving a selection, and
 // keeping the result structurally sound — lives in ctxed. This module holds no
 // policy of its own.
+//
+// The command path adds two more thin actions: render the live transcript to
+// ctxed on stdin to get its categories, and persist the user's chosen category
+// ids as the session's active selection. Neither inspects ids or decides what a
+// bucket means.
 
 import { spawn } from "node:child_process"
 
-/** A live OpenCode outbound message. Only `id` is relevant here. */
-export interface LiveMessage {
-  id?: string
-  [key: string]: unknown
-}
+import { transcriptJson, type HookMessage as TranscriptMessage } from "./transcript.ts"
+
+/** A live OpenCode outbound message. */
+export type LiveMessage = TranscriptMessage
 
 export const DEFAULT_TIMEOUT_MS = 2000
 
 export interface PluginConfig {
-  /** True when a session export and a selection are both configured. */
+  /** True when the plugin is configured enough to run at all. */
   enabled: boolean
   ctxedPath: string
-  sessionExport: string
-  categoriesFile: string
-  categories: string
-  ids: string
+  /** The categorizer command ctxed runs (its prompt goes to the command's stdin). */
+  categorizerCmd: string
+  /** A categorizer model name, when the transport is a model endpoint. */
+  categorizerModel: string
+  /** Maximum number of buckets to ask ctxed for. */
+  maxCategories: string
   timeoutMs: number
 }
 
@@ -34,23 +40,25 @@ export interface RunResult {
   error?: Error
 }
 
-export type Runner = (args: string[]) => Promise<RunResult>
+/**
+ * Runs ctxed with the given argv. When `stdin` is provided it is written to the
+ * child's stdin and the stream is closed; otherwise stdin is ignored.
+ */
+export type Runner = (args: string[], stdin?: string) => Promise<RunResult>
 
 const OPTION_NAMES: Record<keyof Omit<PluginConfig, "enabled">, string> = {
   ctxedPath: "ctxedPath",
-  sessionExport: "sessionExport",
-  categoriesFile: "categoriesFile",
-  categories: "categories",
-  ids: "ids",
+  categorizerCmd: "categorizerCmd",
+  categorizerModel: "categorizerModel",
+  maxCategories: "maxCategories",
   timeoutMs: "timeoutMs",
 }
 
 const ENV_NAMES: Record<keyof Omit<PluginConfig, "enabled">, string> = {
   ctxedPath: "CTXED_PLUGIN_CTXED_PATH",
-  sessionExport: "CTXED_PLUGIN_SESSION_EXPORT",
-  categoriesFile: "CTXED_PLUGIN_CATEGORIES_FILE",
-  categories: "CTXED_PLUGIN_CATEGORIES",
-  ids: "CTXED_PLUGIN_IDS",
+  categorizerCmd: "CTXED_PLUGIN_CATEGORIZER_CMD",
+  categorizerModel: "CTXED_PLUGIN_CATEGORIZER_MODEL",
+  maxCategories: "CTXED_PLUGIN_MAX_CATEGORIES",
   timeoutMs: "CTXED_PLUGIN_TIMEOUT_MS",
 }
 
@@ -62,8 +70,9 @@ function asString(value: unknown): string {
 
 /**
  * Reads plugin configuration from OpenCode plugin options first, falling back
- * to environment variables. A missing session export or selection disables the
- * plugin, which makes it a no-op rather than an error.
+ * to environment variables. The plugin is enabled whenever a ctxed path is
+ * resolvable; a categorizer transport is only needed for the command path, so
+ * it is not a gate (the categorize step fails open and reports if it is missing).
  */
 export function loadConfig(
   options: Record<string, unknown> = {},
@@ -76,48 +85,40 @@ export function loadConfig(
   }
 
   const ctxedPath = pick("ctxedPath") || "ctxed"
-  const sessionExport = pick("sessionExport")
-  const categoriesFile = pick("categoriesFile")
-  const categories = pick("categories")
-  const ids = pick("ids")
+  const categorizerCmd = pick("categorizerCmd")
+  const categorizerModel = pick("categorizerModel")
+  const maxCategories = pick("maxCategories")
 
   let timeoutMs = Number.parseInt(pick("timeoutMs"), 10)
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = DEFAULT_TIMEOUT_MS
 
-  const hasCategorySelection = categoriesFile !== "" && categories !== ""
-  const hasIdSelection = ids !== ""
   return {
-    enabled: sessionExport !== "" && (hasCategorySelection || hasIdSelection),
+    enabled: true,
     ctxedPath,
-    sessionExport,
-    categoriesFile,
-    categories,
-    ids,
+    categorizerCmd,
+    categorizerModel,
+    maxCategories,
     timeoutMs,
   }
 }
 
 /** Builds the exact ctxed invocation the plugin relies on. */
-export function buildArgs(config: PluginConfig): string[] {
-  const args = [config.ctxedPath, "prune", config.sessionExport]
-  if (config.categoriesFile !== "" && config.categories !== "") {
-    args.push("--categories-file", config.categoriesFile, "--categories", config.categories)
-  } else {
-    args.push("--ids", config.ids)
-  }
-  args.push("--ids-only")
-  return args
+export function buildArgs(config: PluginConfig, selection: Selection): string[] {
+  return [
+    config.ctxedPath,
+    "prune",
+    "-",
+    "--categories-file",
+    selection.categoriesFile,
+    "--categories",
+    selection.categoryIds,
+    "--ids-only",
+  ]
 }
 
 /** A compact fingerprint of the configured invocation inputs. */
-export function selectionSignature(config: PluginConfig): string {
-  return JSON.stringify([
-    config.ctxedPath,
-    config.sessionExport,
-    config.categoriesFile,
-    config.categories,
-    config.ids,
-  ])
+export function selectionSignature(config: PluginConfig, selection: Selection): string {
+  return JSON.stringify([config.ctxedPath, selection.categoriesFile, selection.categoryIds])
 }
 
 /**
@@ -130,8 +131,8 @@ export function sessionRevision(messages: readonly LiveMessage[]): string {
   return ids.join("|")
 }
 
-export function cacheKey(config: PluginConfig, revision: string): string {
-  return `${selectionSignature(config)}\n${revision}`
+export function cacheKey(config: PluginConfig, selection: Selection, revision: string): string {
+  return `${selectionSignature(config, selection)}\n${revision}`
 }
 
 /** Parses `{"droppedIds":[…]}` and rejects anything that is not that shape. */
@@ -176,19 +177,38 @@ export class PruneCache {
     this.entries.set(key, ids)
   }
 
+  /** Drops every entry; used when the selection changes. */
+  clear(): void {
+    this.entries.clear()
+  }
+
   get size(): number {
     return this.entries.size
   }
 }
 
 /** The default runner: spawn ctxed with a hard timeout, never throw. */
-export function runCtxed(args: string[], timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<RunResult> {
+export function runCtxed(
+  args: string[],
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  stdin?: string,
+): Promise<RunResult> {
   return new Promise<RunResult>((resolve) => {
     let settled = false
     let stdout = ""
     let stderr = ""
 
-    const child = spawn(args[0], args.slice(1), { stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(args[0], args.slice(1), {
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    })
+
+    if (stdin !== undefined && child.stdin) {
+      child.stdin.on("error", () => {
+        // The child may exit before reading all input; the exit code still
+        // tells the caller what happened.
+      })
+      child.stdin.end(stdin)
+    }
 
     const finish = (result: RunResult): void => {
       if (settled) return
@@ -220,12 +240,13 @@ export function runCtxed(args: string[], timeoutMs: number = DEFAULT_TIMEOUT_MS)
 }
 
 export function defaultRunner(config: PluginConfig): Runner {
-  return (args) => runCtxed(args, config.timeoutMs)
+  return (args, stdin) => runCtxed(args, config.timeoutMs, stdin)
 }
 
 export interface ApplyInput<T extends LiveMessage> {
   messages: readonly T[]
   config: PluginConfig
+  selection: Selection
   revision: string
   cache: PruneCache
   run: Runner
@@ -244,20 +265,24 @@ export interface ApplyResult<T extends LiveMessage> {
  * Resolves the dropped set (from cache or ctxed) and filters the messages.
  * Fail-open: any ctxed failure, timeout, or unparseable output leaves the
  * messages unchanged and reports the error instead of blocking the turn.
+ *
+ * The selection is re-derived over the **live** transcript every time the
+ * revision changes, so a message added after the selection was recorded is
+ * covered by it too.
  */
 export async function applyPrune<T extends LiveMessage>(input: ApplyInput<T>): Promise<ApplyResult<T>> {
-  const { messages, config, revision, cache, run, report } = input
+  const { messages, config, selection, revision, cache, run, report } = input
 
   if (!config.enabled) {
     return { messages: [...messages], droppedIds: [], dropped: 0, cached: false }
   }
 
-  const key = cacheKey(config, revision)
+  const key = cacheKey(config, selection, revision)
   let droppedIds = cache.get(key)
   let cached = droppedIds !== undefined
 
   if (droppedIds === undefined) {
-    const result = await run(buildArgs(config))
+    const result = await run(buildArgs(config, selection), transcriptJson(messages))
     if (result.code !== 0) {
       const detail = (result.stderr || String(result.error ?? "")).trim()
       const error = `ctxed exited ${result.code}${detail === "" ? "" : `: ${detail}`}`
@@ -283,4 +308,168 @@ export async function applyPrune<T extends LiveMessage>(input: ApplyInput<T>): P
     dropped: messages.length - filtered.length,
     cached,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Command path: categorize the live transcript, then record a selection.
+// ---------------------------------------------------------------------------
+
+/** One bucket as ctxed reports it in a categories file. Ids stay internal. */
+export interface Bucket {
+  id: number
+  label: string
+  entryCount: number
+  tokens: number
+}
+
+/**
+ * Parses the buckets from a categories file for presentation. Only the fields
+ * a human sees are read; entry ids are deliberately ignored here and never
+ * surface to the user or leave this module.
+ */
+export function parseBuckets(categoriesJson: string): Bucket[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(categoriesJson)
+  } catch {
+    throw new Error("categories file is not valid JSON")
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    throw new Error("categories file is not a JSON object")
+  }
+  const categories = (parsed as { categories?: unknown }).categories
+  if (!Array.isArray(categories)) throw new Error("categories file has no categories array")
+  const buckets: Bucket[] = []
+  for (const raw of categories) {
+    if (raw === null || typeof raw !== "object") continue
+    const c = raw as Record<string, unknown>
+    const id = typeof c.id === "number" ? c.id : Number.parseInt(String(c.id ?? ""), 10)
+    if (!Number.isFinite(id)) continue
+    buckets.push({
+      id,
+      label: typeof c.label === "string" ? c.label : `category ${id}`,
+      entryCount: typeof c.entryCount === "number" ? c.entryCount : 0,
+      tokens: typeof c.tokens === "number" ? c.tokens : 0,
+    })
+  }
+  return buckets
+}
+
+/** Renders the buckets as a human-readable list. No ids appear. */
+export function formatBuckets(buckets: readonly Bucket[]): string {
+  const lines = buckets.map((b) => `  ${b.id}  ${b.label}  (${b.entryCount} entries, ${b.tokens} tokens)`)
+  return ["Categories:", ...lines].join("\n")
+}
+
+export interface CategorizeResult {
+  buckets: Bucket[]
+  categoriesJson: string
+  exitCode: number
+  stdout: string
+  stderr: string
+  error?: string
+}
+
+/** Builds the ctxed invocation that categorizes a transcript on stdin. */
+export function buildCategorizeArgs(config: PluginConfig): string[] {
+  const args = [config.ctxedPath, "categorize", "-"]
+  if (config.categorizerCmd !== "") args.push("--categorizer-cmd", config.categorizerCmd)
+  if (config.categorizerModel !== "") args.push("--model", config.categorizerModel)
+  if (config.maxCategories !== "") args.push("--max-categories", config.maxCategories)
+  args.push("--out", "-")
+  return args
+}
+
+/**
+ * Runs ctxed's categorize over a serialized transcript. `--out -` makes ctxed
+ * print the categories file to stdout, so no temp file is needed. The caller
+ * serializes with the function matching its live shape. Fail-open: any failure
+ * returns an error and no buckets, and the caller leaves the session unchanged.
+ */
+export async function categorizeLive(input: {
+  transcript: string
+  config: PluginConfig
+  run: Runner
+}): Promise<CategorizeResult> {
+  const { transcript, config, run } = input
+  const result = await run(buildCategorizeArgs(config), transcript)
+  if (result.code !== 0) {
+    const detail = (result.stderr || String(result.error ?? "")).trim()
+    return {
+      buckets: [],
+      categoriesJson: "",
+      exitCode: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      error: `ctxed exited ${result.code}${detail === "" ? "" : `: ${detail}`}`,
+    }
+  }
+  // ctxed writes the human table to stdout for a file target, but with `--out -`
+  // the JSON document is what stdout carries; take the last parsable object.
+  const json = extractJsonObject(result.stdout) ?? result.stdout
+  try {
+    const buckets = parseBuckets(json)
+    return { buckets, categoriesJson: json, exitCode: 0, stdout: result.stdout, stderr: result.stderr }
+  } catch (cause) {
+    return {
+      buckets: [],
+      categoriesJson: json,
+      exitCode: 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      error: `ctxed categories could not be parsed: ${(cause as Error).message}`,
+    }
+  }
+}
+
+/**
+ * Pulls the last top-level JSON object out of mixed output (a human table may
+ * precede it), so the categorize path tolerates ctxed printing both.
+ */
+export function extractJsonObject(text: string): string | undefined {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start === -1 || end === -1 || end <= start) return undefined
+  return text.slice(start, end + 1)
+}
+
+// ---------------------------------------------------------------------------
+// Selection store
+// ---------------------------------------------------------------------------
+
+/** The recorded selection for one session. Only category ids, never entry ids. */
+export interface Selection {
+  categoriesFile: string
+  categoryIds: string
+  selectedAt: string
+}
+
+/** A storage key namespaced to this plugin and one session. */
+export function selectionKey(sessionID: string): string {
+  return `ctxed.prune.selection.${sessionID}`
+}
+
+/** Parses a stored selection, returning undefined if it is absent or malformed. */
+export function parseSelection(raw: unknown): Selection | undefined {
+  if (raw === null || raw === undefined || typeof raw !== "object") return undefined
+  const s = raw as Record<string, unknown>
+  const categoriesFile = typeof s.categoriesFile === "string" ? s.categoriesFile : ""
+  const categoryIds = typeof s.categoryIds === "string" ? s.categoryIds : ""
+  if (categoriesFile === "" || categoryIds === "") return undefined
+  return {
+    categoriesFile,
+    categoryIds,
+    selectedAt: typeof s.selectedAt === "string" ? s.selectedAt : "",
+  }
+}
+
+/**
+ * Parses a user's bucket selection ("1,3" or "drop 1 3") into a normalized
+ * id list. Accepts ids only — never message ids.
+ */
+export function parseSelectionInput(input: string): string[] {
+  return input
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s))
 }

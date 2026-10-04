@@ -70,6 +70,45 @@ The package ships two APIs; the plugin uses the **promise** one (`@opencode/plug
 4. Local plugins load from `.opencode/plugins/` (project) or
    `~/.config/opencode/plugins/` (global). `opencode plugin list` confirms load.
 
+## Packaging: plugins are flat files, not packages
+
+**A plugin must be a single file directly under `.opencode/plugins/`.** A
+subdirectory is *not* scanned: `.opencode/plugins/ctxed/plugin.ts` produced
+`opencode plugin list` → "No plugins found". Copying the same file up to
+`.opencode/plugins/ctxed-prune.ts` made it appear and load.
+
+Consequence: a multi-file plugin (`plugin.ts` importing `./core.ts`,
+`./transcript.ts`) must be **bundled to one file** before install. The plugin
+build step uses `esbuild`:
+
+```sh
+esbuild src/plugin.ts --bundle --format=esm --platform=node \
+  --external:@opencode/plugin --outfile=plugins/ctxed-prune.js
+```
+
+`@opencode/plugin` stays external because OpenCode resolves it from the project's
+`.opencode/node_modules` at load time.
+
+## The hook can change what the model receives
+
+Proved with a throwaway plugin that drops one message in the `context` hook. The
+token message was dropped, and on the next turn the model replied **"unknown."**
+to "what token did I ask you to remember?" — so mutating `event.messages` really
+does change the outbound request, and the drop persists across dispatches.
+
+The same run showed the live message list contains entries with a **`null` id**
+(assistant/tool parts). A serializer must tolerate those and an id filter must
+leave them alone.
+
+## Commands do not run under `opencode run`
+
+`opencode run "/ctxed-prune"` sends the text to the model; it does **not**
+execute the plugin command. Commands are a TUI/API surface. The programmatic
+path is `session.command({ sessionID, name, text })` over the server API
+(`opencode api …`, or the `session.command` operation), not a CLI `run`
+argument. The functional verifier must drive the command through the API, or
+assert the command path with the plugin's own functions and drive the hook live.
+
 ## Impact on the change
 
 - **D1/D2 as designed stand** — `session.hook("context")` is the seam.
@@ -80,6 +119,7 @@ The package ships two APIs; the plugin uses the **promise** one (`@opencode/plug
   support added in task 1.3).
 - **New task 2.x detail**: the in-session command uses `command.transform`, and
   the selection persists via `ctx.storage`.
+- **Packaging is a build step**: bundle to one file; a directory does not load.
 - The plugin's `package.json` must ship or install the pinned
   `@opencode/plugin`, and the functional verifier must run with debug logging so
   a load failure is visible.

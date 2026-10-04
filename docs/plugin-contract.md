@@ -84,11 +84,20 @@ resolves that selection to ids with `--ids-only` above. Ids stay internal.
 prune` against that file and replace the outbound message list with the retained
 lines.
 
-**OpenCode.** Sessions live in SQLite, so export once to JSON and run `ctxed
-prune` against the export. OpenCode's v2 plugin API exposes
-`session.hook("context")`, which runs as the agent-loop request is assembled and
-lets a plugin edit `event.messages`. Ask ctxed for the dropped ids and filter the
-live messages by id — ctxed never opens the database:
+**OpenCode.** Sessions live in SQLite, so the plugin never reads them: it holds
+the live messages and hands them to ctxed on stdin. OpenCode's v2 plugin API
+gives two surfaces:
+
+- `session.hook("context")` — runs as the request is assembled, with a mutable
+  `event.messages`. The plugin re-derives the dropped set over the live
+  transcript and filters by id.
+- `command.transform` — registers the in-session `/ctxed-prune` command, which
+  categorizes the live conversation via `session.context`, presents the buckets,
+  and records the selection.
+
+The plugin must be **bundled to a single flat file** under
+`.opencode/plugins/` — OpenCode does not scan a subdirectory. See
+`docs/opencode-plugin-spike.md`.
 
 ```ts
 import { Plugin } from "@opencode/plugin"
@@ -97,17 +106,17 @@ export default Plugin.define({
   id: "ctxed.prune",
   async setup(ctx) {
     await ctx.session.hook("context", async (event) => {
-      // ctxed prune <export> … --ids-only → {"droppedIds":[…]}
-      const dropped = new Set(await droppedIdsFromCtxed())
-      event.messages = event.messages.filter((message) => !dropped.has(message.id))
+      // ctxed prune - --ids-only → {"droppedIds":[…]}
+      const dropped = new Set(await droppedIdsFromCtxed(event.messages))
+      event.messages = event.messages.filter((m) => !dropped.has(m.id))
     })
   },
 })
 ```
 
 `plugin/opencode/` is the working implementation of this shape — fail-open,
-cached per selection and session revision, with configuration from plugin
-options or environment. See `plugin/opencode/README.md`.
+cached per selection and session revision, the in-session command, and
+configuration from plugin options or environment. See `plugin/opencode/README.md`.
 
 ## What the plugin must not do
 
