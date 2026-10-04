@@ -1,14 +1,16 @@
 # Plugin contract
 
 How a harness plugin applies a ctxed prune. The plugin is deliberately trivial:
-it asks ctxed for a pruned transcript and substitutes it. All categorization,
-selection, id resolution, and validity handling live in ctxed.
+it asks ctxed for a pruned transcript and substitutes it, or — where it holds
+live message objects — asks for the dropped id set and filters by id. All
+categorization, selection, id resolution, and validity handling live in ctxed.
 
 ## What the plugin provides
 
-- **The session source.** A path to the session document ctxed can read: a
-  Claude Code `.jsonl` transcript, or an OpenCode `session export` JSON. ctxed
-  never opens a harness database.
+- **The session source.** The session document ctxed can read: a Claude Code
+  `.jsonl` transcript, or an OpenCode `session export` JSON. It may be a path, or
+  `-` to read it on stdin so a plugin never has to write a temp file. ctxed never
+  opens a harness database.
 - **A prune selection.** Either:
   - a categories file plus the category ids to drop (`--categories-file F
     --categories 1,3`), or
@@ -30,6 +32,47 @@ ctxed prune <session> --categories-file <file> --categories <ids>
 The plugin does not parse, reorder, or reason about entries. It parses the
 transcript it is given and uses it.
 
+### Id-only output
+
+A plugin that holds live message objects — OpenCode's dispatch hook does — can
+avoid serialising a transcript on every dispatch. With `--ids-only`, ctxed
+resolves the selection and any orphans exactly as above, but prints only the
+**dropped** ids:
+
+```sh
+ctxed prune session.json --categories-file session.categories.json --categories 1,3 --ids-only
+# {"droppedIds":["msg_ab12","msg_cd34"]}
+```
+
+- **stdout** — a single JSON object whose `droppedIds` array is exactly the
+  resolved drop set after orphan resolution. An empty selection yields `[]`.
+- **stderr** — the same diagnostics as a normal prune, including `adjustment:`
+  lines.
+- **exit code** — unchanged.
+
+The plugin removes the messages whose id is in `droppedIds`, preserving order
+and every other message. Output is deterministic for a given session and
+selection.
+
+### Categorize from the live transcript
+
+The plugin categorizes the **live** messages rather than a stale export, so the
+buckets describe the session the user is actually in. It pipes the transcript to
+ctxed on stdin and asks for the categories document on stdout:
+
+```sh
+<live transcript> | ctxed categorize - --model M --out -
+```
+
+- **stdout** — the categories document (JSON), with `session` set to `-`.
+- **exit code** — 0 on success; non-zero on failure.
+
+The user reads the bucket labels, selects buckets to drop, and the plugin then
+resolves that selection to ids with `--ids-only` above. Ids stay internal.
+
+`--out <path>` writes the categories file and prints a human table instead;
+`--out -` is the pathless form a plugin uses.
+
 ## Invariants the plugin can rely on
 
 - The stored session is never modified, and the session id is unchanged.
@@ -43,9 +86,39 @@ transcript it is given and uses it.
 prune` against that file and replace the outbound message list with the retained
 lines.
 
-**OpenCode.** Sessions live in SQLite, so export once to JSON and run `ctxed
-prune` against the export. Apply the result at dispatch by mapping the retained
-`messages` array into the request — ctxed never opens the database.
+**OpenCode.** Sessions live in SQLite, so the plugin never reads them: it holds
+the live messages and hands them to ctxed on stdin. OpenCode's v2 plugin API
+gives two surfaces:
+
+- `session.hook("context")` — runs as the request is assembled, with a mutable
+  `event.messages`. The plugin re-derives the dropped set over the live
+  transcript and filters by id.
+- `command.transform` — registers the in-session `/ctxed-prune` command, which
+  categorizes the live conversation via `session.context`, presents the buckets,
+  and records the selection.
+
+The plugin must be **bundled to a single flat file** under
+`.opencode/plugins/` — OpenCode does not scan a subdirectory. See
+`docs/opencode-plugin-spike.md`.
+
+```ts
+import { Plugin } from "@opencode/plugin"
+
+export default Plugin.define({
+  id: "ctxed.prune",
+  async setup(ctx) {
+    await ctx.session.hook("context", async (event) => {
+      // ctxed prune - --ids-only → {"droppedIds":[…]}
+      const dropped = new Set(await droppedIdsFromCtxed(event.messages))
+      event.messages = event.messages.filter((m) => !dropped.has(m.id))
+    })
+  },
+})
+```
+
+`plugin/opencode/` is the working implementation of this shape — fail-open,
+cached per selection and session revision, the in-session command, and
+configuration from plugin options or environment. See `plugin/opencode/README.md`.
 
 ## What the plugin must not do
 

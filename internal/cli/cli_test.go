@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -648,10 +649,249 @@ func TestPruneHonorsEditedCategoriesFile(t *testing.T) {
 	}
 }
 
+func TestPruneIDsOnlyByCategory(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+
+	code, stdout, stderr := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	var r struct {
+		DroppedIDs []string `json:"droppedIds"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("stdout is not a JSON object: %v\n%s", err, stdout)
+	}
+	want := []string{"msg_101f9625c001NLzjIh2rzpuhNj"} // category 2
+	if !reflect.DeepEqual(r.DroppedIDs, want) {
+		t.Fatalf("droppedIds = %v, want %v", r.DroppedIDs, want)
+	}
+	if strings.Contains(stdout, `"messages"`) {
+		t.Fatal("ids-only emitted a transcript instead of an id set")
+	}
+}
+
+func TestPruneIDsOnlyByExplicitID(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	const id = "msg_101f96175001KNBHKRACZI25DD"
+	code, stdout, stderr := run("prune", in, "--ids", id, "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	var r struct {
+		DroppedIDs []string `json:"droppedIds"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if !reflect.DeepEqual(r.DroppedIDs, []string{id}) {
+		t.Fatalf("droppedIds = %v, want [%s]", r.DroppedIDs, id)
+	}
+}
+
+func TestPruneIDsOnlyReflectsOrphanResolution(t *testing.T) {
+	in := copyFixture(t, claudeFixture)
+	cats := categorizeTo(t, in, claudeCategorizeResponse)
+
+	// Category 1 holds the tool_use; its result is in category 2, so the
+	// resolved set must include the dependent result's id too.
+	code, stdout, stderr := run("prune", in, "--categories-file", cats, "--categories", "1", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "adjustment:") {
+		t.Fatalf("expected an adjustment on stderr, got %q", stderr)
+	}
+	var r struct {
+		DroppedIDs []string `json:"droppedIds"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	want := []string{
+		"61e80e18-146b-46e3-bd72-c6bc5e568a42",
+		"46cb1fcf-1731-4bd3-b5e5-04a35e187404",
+		"c3990fee-117c-4879-90e0-158f2245a45e",
+	}
+	if !reflect.DeepEqual(r.DroppedIDs, want) {
+		t.Fatalf("droppedIds = %v, want %v", r.DroppedIDs, want)
+	}
+}
+
+func TestPruneIDsOnlyNothingDropped(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+
+	// Empty the selected category so the selection resolves to no ids.
+	var f map[string]any
+	data, _ := os.ReadFile(cats)
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	list := f["categories"].([]any)
+	list[1].(map[string]any)["entryIds"] = []any{}
+	edited, _ := json.Marshal(f)
+	if err := os.WriteFile(cats, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[],"droppedToolCallIds":[]}` {
+		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[],"droppedToolCallIds":[]}`)
+	}
+}
+
+func TestPruneIDsOnlyEmitsDroppedToolCallIDs(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	// Entry 1 is a tool-call entry: dropping it must also report the tool-call
+	// ids it issued, so a plugin can drop the matching result even when the live
+	// result message carries no id of its own.
+	code, stdout, stderr := run("prune", in, "--ids", "msg_101f9625c001NLzjIh2rzpuhNj", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	var parsed struct {
+		DroppedIDs         []string `json:"droppedIds"`
+		DroppedToolCallIDs []string `json:"droppedToolCallIds"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("parse: %v\n%s", err, stdout)
+	}
+	if len(parsed.DroppedToolCallIDs) == 0 {
+		t.Fatalf("expected dropped tool-call ids for a tool-call entry, got none: %s", stdout)
+	}
+	// Deterministic ordering.
+	if !sort.StringsAreSorted(parsed.DroppedToolCallIDs) {
+		t.Fatalf("droppedToolCallIds not sorted: %v", parsed.DroppedToolCallIDs)
+	}
+}
+
+func TestPruneIDsOnlyEmptySelection(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	// An explicit but empty --ids is a selection that resolves to no ids.
+	code, stdout, stderr := run("prune", in, "--ids", "", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[],"droppedToolCallIds":[]}` {
+		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[],"droppedToolCallIds":[]}`)
+	}
+}
+
+func TestPruneIDsOnlyDeterministic(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	_, a, _ := run("prune", in, "--categories-file", cats, "--categories", "1", "--ids-only")
+	_, b, _ := run("prune", in, "--categories-file", cats, "--categories", "1", "--ids-only")
+	if a != b {
+		t.Fatalf("ids-only output is not deterministic:\n%s\n%s", a, b)
+	}
+}
+
 func assertNoEditedFile(t *testing.T, in string) {
 	t.Helper()
 	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(in), "*.edited.*"))
 	if len(matches) != 0 {
 		t.Fatalf("expected no edited file, found %v", matches)
+	}
+}
+
+// runStdin is run() with an explicit stdin, for the piped-transcript path.
+func runStdin(stdin string, args ...string) (code int, stdout, stderr string) {
+	var out, errBuf bytes.Buffer
+	code = cli.RunWithStdin(args, strings.NewReader(stdin), &out, &errBuf)
+	return code, out.String(), errBuf.String()
+}
+
+func TestCategorizeFromStdinMatchesFile(t *testing.T) { // The same session and response must produce the same categories whether the
+	// session arrives as a path or on stdin.
+	data, err := os.ReadFile(opencodeFixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	fileOut := filepath.Join(t.TempDir(), "from-file.json")
+	code, _, stderr := run("categorize", opencodeFixture,
+		"--categorizer-cmd", "cat "+ocCategorizeResponse, "--out", fileOut)
+	if code != cli.ExitOK {
+		t.Fatalf("file categorize failed: %d %q", code, stderr)
+	}
+	stdinOut := filepath.Join(t.TempDir(), "from-stdin.json")
+	code, _, stderr = runStdin(string(data), "categorize", "-",
+		"--categorizer-cmd", "cat "+ocCategorizeResponse, "--out", stdinOut)
+	if code != cli.ExitOK {
+		t.Fatalf("stdin categorize failed: %d %q", code, stderr)
+	}
+	a, _ := os.ReadFile(fileOut)
+	b, _ := os.ReadFile(stdinOut)
+	// The session field records the source name, so compare the categories body.
+	var fa, fb map[string]any
+	if err := json.Unmarshal(a, &fa); err != nil {
+		t.Fatalf("parse file out: %v", err)
+	}
+	if err := json.Unmarshal(b, &fb); err != nil {
+		t.Fatalf("parse stdin out: %v", err)
+	}
+	delete(fa, "session")
+	delete(fb, "session")
+	if !reflect.DeepEqual(fa, fb) {
+		t.Fatalf("categories differ between file and stdin:\n%v\n%v", fa, fb)
+	}
+}
+
+func TestPruneFromStdinIDsOnly(t *testing.T) {
+	data, err := os.ReadFile(opencodeFixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	// Build a proper categories file by categorizing the fixture (same as other
+	// prune tests), then prune the same content arriving on stdin.
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	code, stdout, stderr := runStdin(string(data), "prune", "-",
+		"--categories-file", cats, "--categories", "2", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("prune from stdin failed: %d %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "droppedIds") {
+		t.Fatalf("stdout = %q, want a droppedIds object", stdout)
+	}
+	// The stdin path and the file path must resolve to the same drop set.
+	_, fromFile, _ := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
+	if strings.TrimSpace(stdout) != strings.TrimSpace(fromFile) {
+		t.Fatalf("stdin and file drop sets differ:\n%s\n%s", stdout, fromFile)
+	}
+}
+
+func TestCategorizeOutDashPrintsJSONToStdout(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	// `--out -` must print the categories document on stdout, not write a file
+	// named "-", so a plugin can read the buckets without a temp file.
+	code, stdout, stderr := run("categorize", in,
+		"--categorizer-cmd", "cat "+ocCategorizeResponse, "--out", "-")
+	if code != cli.ExitOK {
+		t.Fatalf("categorize --out - failed: exit %d, stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, "wrote -") {
+		t.Fatalf("--out - wrote a file instead of printing: %q", stdout)
+	}
+	var parsed struct {
+		Categories []struct {
+			Label string `json:"label"`
+			ID    int    `json:"id"`
+		} `json:"categories"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("stdout is not the categories JSON: %v\n%s", err, stdout)
+	}
+	if len(parsed.Categories) != 2 || parsed.Categories[0].ID != 1 {
+		t.Fatalf("unexpected categories: %+v", parsed.Categories)
+	}
+	// No file named "-" may be created in the working directory.
+	if _, err := os.Stat("-"); err == nil {
+		t.Fatal("--out - created a literal '-' file")
 	}
 }

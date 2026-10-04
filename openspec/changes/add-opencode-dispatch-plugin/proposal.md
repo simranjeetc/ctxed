@@ -2,56 +2,63 @@
 
 ## Why
 
-ctxed can emit a pruned transcript, but nothing applies it. A prune still has to
-be performed by hand, so the point — a session that continues with a slimmer
-context — is not yet real. OpenCode exposes `session.hook("context", handler)`,
-an outbound-transcript hook (the one DCP uses), so a small plugin can apply a
-ctxed prune at dispatch and let the session continue. The plugin must stay thin:
-categorization and pruning already live in ctxed; the plugin only asks and
-substitutes.
+ctxed can decide what to drop, but nothing applies that decision to a running
+session. In OpenCode the user has to export a session, categorize it, pick
+buckets, and hope the selection still matches — none of which happens inside the
+session they are in.
 
-**Claude Code is not covered by this change.** Its hook surface
-(`~/.claude/settings.json`: `SessionStart`, `PreToolUse`, and so on) cannot
-rewrite the outbound message list, so dispatch-time pruning is not expressible
-as a Claude Code hook. That harness needs a different mechanism — editing the
-transcript file it resumes from, or a wrapper — and is deferred to its own
-change.
+This change makes the whole workflow happen inside the session: the plugin
+categorizes the **live** conversation, presents the buckets, takes the user's
+bucket selection, and applies it to every subsequent dispatch. Categorization is
+a step of the prune, not a separate tool run on a stale export.
+
+**Claude Code is not covered by this change.** Its settings hooks cannot rewrite
+the outbound message list, and a mod's `turn.step` event pins the transcript, so
+dispatch-time pruning is not expressible there; its live mechanism is compaction
+(`docs/live-context-prune-decisions.md`, `add-claude-code-live-prune`).
 
 ## What Changes
 
-- A new OpenCode plugin (TypeScript, `@opencode-ai/plugin`) that hooks
-  `session.hook("context")`, obtains the resolved prune set from ctxed, and
-  removes those messages from the outbound transcript for that dispatch.
-- A small, additive ctxed flag: `prune --ids-only` prints the resolved set of
-  **dropped** entry ids (after orphan resolution) instead of a transcript. The
-  plugin needs the dropped set, not the kept set, so it can filter live messages
-  by id without re-serialising the transcript on every dispatch.
-- Configuration: ctxed's location, the session export, and the categories file
-  plus the selected categories or explicit ids.
-- No change to ctxed's existing behavior; the flag is additive.
+- The OpenCode plugin gains an **in-session ctxed command**: it categorizes the
+  live messages (via ctxed), presents the buckets, and records the user's bucket
+  selection. Buckets, not ids, are what the user picks.
+- The dispatch hook applies the recorded selection to **every** dispatch,
+  including messages added after the selection, by re-deriving the dropped set
+  over the live transcript (cached by session revision).
+- ctxed gains the inputs this needs: a way to categorize an arbitrary transcript
+  and to print the resolved dropped ids (`prune --ids-only`).
+- Configuration: ctxed's location, the categorizer model/transport, and the
+  active selection.
+- No change to ctxed's existing file-based behavior.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `opencode-dispatch-plugin`: apply a ctxed prune to the outbound transcript at
-  dispatch — non-destructively, fail-open, and with no logic of its own.
+- `opencode-dispatch-plugin`: run categorize → select → apply from inside an
+  OpenCode session, with the selection covering later messages, non-destructively
+  and fail-open.
 
 ### Modified Capabilities
 
-- `context-dispatch-prune`: `prune` gains an id-only output mode that reports the
-  resolved set of dropped entry ids (after orphan resolution), so a dispatch
-  plugin can filter the outbound messages by id instead of re-serialising a
-  transcript on every dispatch. This is the delta in
-  `specs/context-dispatch-prune/spec.md`.
+- `context-dispatch-prune`: adds the id-only output mode so the plugin can filter
+  outbound messages by id (delta in `specs/context-dispatch-prune/spec.md`).
 
 ## Impact
 
-- New: `plugin/opencode/` (TypeScript) with a pin to the plugin API version, plus
-  a node test that exercises the id-filter with a stub ctxed.
-- ctxed: `prune --ids-only` (additive), covered by a test.
+- `plugin/opencode/` (TypeScript): the in-session command, the dispatch hook, the
+  live-transcript hand-off to ctxed, and the selection store.
+- ctxed: `prune --ids-only`, and a transcript input path for categorizing live
+  messages (additive).
 - Runtime: the plugin shells out to `ctxed`; the binary must be on `PATH` or
-  configured.
+  configured. Categorization needs a model (endpoint or `--categorizer-cmd`).
 - OpenCode's plugin API is beta; the plugin pins a version.
-- Out of scope: Claude Code, any automatic/unattended pruning policy, and any
-  other change to ctxed.
+- Out of scope: Claude Code, automatic/unattended pruning, any other ctxed change.
+
+## Verification
+
+Functional, against a live OpenCode session (see `scripts/verify-functionally.sh`
+and the strategy in `docs/verification-strategy.md`): create a session, run the
+in-session categorize+select, dispatch, and confirm the dropped bucket is absent
+from the request, a message added after selection in a dropped bucket is also
+absent, and the stored session is unchanged.

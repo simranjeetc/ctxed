@@ -2,33 +2,32 @@
 
 ## Context
 
-See `proposal.md`. ctxed already emits a pruned transcript and documents the
-plugin role in `docs/plugin-contract.md`. The mechanism this change binds to is
-OpenCode's plugin API: the binary exposes `session.hook("context", handler)`,
-which runs as a request is assembled — the same hook DCP uses. Claude Code's
-hooks are command hooks keyed on events such as `SessionStart`; none can rewrite
-the outbound message list, so Claude Code is out of scope here.
+See `proposal.md`. ctxed groups a session's entries into labeled buckets
+(`categorize`) and resolves a bucket selection to entry ids (`prune`). This
+change binds that workflow to OpenCode's plugin API, so the prune is chosen and
+applied from inside a running session.
 
 **The constraint that shapes the plugin.** At dispatch the plugin holds live
-message objects; ctxed works on a session *document*. Handing the live transcript
-to ctxed every dispatch would mean serialising and re-parsing it each time. Since
-OpenCode message ids are stable (`msg_…`), the plugin instead asks ctxed once for
-the set of **dropped ids** and filters live messages by id.
+message objects; ctxed works on a session *document*. The plugin therefore never
+re-implements policy: it hands the live transcript to ctxed (via stdin) and
+consumes what ctxed returns.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Apply ctxed's prune to every dispatch, non-destructively.
-- Keep the plugin trivial: exec, parse, filter — no policy.
+- Run the whole workflow — categorize, select, apply — from inside the session.
+- Have a bucket selection cover messages added after it was made.
+- Keep the plugin policy-free: exec ctxed, present, substitute.
 - Never let a ctxed problem break a turn (fail-open).
 - Bounded per-dispatch cost.
 
 **Non-Goals:**
 
-- Claude Code (its hook surface cannot transform messages).
-- Any automatic or budget-triggered pruning policy — the selection stays the
-  user's explicit choice.
+- Claude Code (its hook surface cannot transform messages; see
+  `docs/live-context-prune-decisions.md`).
+- Automatic or budget-triggered pruning. The selection is the user's explicit
+  choice.
 - Mutating stored session history.
 - A proxy or request interceptor.
 
@@ -36,89 +35,151 @@ the set of **dropped ids** and filters live messages by id.
 
 ### D1: Bind to `session.hook("context")`
 
-- Why: it is the dispatch-time transcript hook — the only place a plugin can
-  change what is sent without sitting in front of the API.
+The dispatch-time transcript hook is the only place a plugin can change what is
+sent without sitting in front of the API.
+
 - Alternative considered: an HTTP proxy. Rejected — vastly larger and
   unnecessary when the hook exists.
 
-### D2: Ask ctxed for the dropped id set; filter by id
+### D2: Categorization is part of the workflow, run in-session
 
-The plugin calls `ctxed prune … --ids-only` and removes messages whose id is in
-`droppedIds`.
+The plugin registers an in-session ctxed command (an OpenCode command, backed by
+the plugin). It categorizes the **live** messages and presents the buckets.
 
-- Why: ids are stable and already present on messages; the plugin never
-  serialises the transcript, so it stays thin and cheap.
-- Alternative considered: pass the live transcript to ctxed (add a stdin mode)
-  and substitute the returned transcript. Rejected — per-dispatch
-  serialise/parse cost and a larger ctxed surface.
-- Alternative considered: keep-only-kept-ids from the emitted transcript.
-  Rejected — it cannot distinguish a dropped message from one that was never in
-  the stale export, so it would drop new messages.
+- Why: the user's mental model is "look at the topics in this session and drop
+  some". Categorization is a step of the prune, not a separate tool run on a
+  stale export. Running it in-session also means the buckets describe the
+  session the user is actually in.
+- Alternative considered: keep `categorize` as a prerequisite the user runs
+  outside, on an export. Rejected — it drifts: messages added after the export
+  are never covered by the selection.
 
-### D3: Fail-open
+### D3: The plugin delegates to ctxed over a live transcript
+
+The plugin serializes the live messages to ctxed's session shape and passes them
+on stdin (a temp file only if stdin is unavailable). ctxed returns the buckets;
+after selection, ctxed returns the dropped ids.
+
+- Why: all categorization, bucket assignment, selection resolution, and orphan
+  handling stay in ctxed. The plugin stays thin.
+- Alternative considered: the plugin classifies messages itself. Rejected —
+  that is policy, and it belongs in ctxed.
+
+### D4: A recorded selection, applied to every dispatch
+
+Confirming a selection records it for the session. The dispatch hook applies it
+to every outbound request — and because it re-derives the dropped set over the
+**live** message list each time, a message added later is covered by the
+selection.
+
+- Why: this is what makes "continue in the same session" true for a long
+  session, not just for the messages that existed at selection time.
+- Implementation note: derive the dropped set by re-running ctxed over the live
+  transcript, cached by session revision, rather than freezing an id list. A
+  frozen list cannot cover new messages.
+
+### D5: Fail-open
 
 On any ctxed failure — non-zero exit, timeout, unparseable output — the plugin
 sends the transcript unchanged and reports the error.
 
-- Why: pruning is an optimization; it must never break the user's turn or block
-  on a broken binary or stale file.
-- Alternative considered: fail-closed. Rejected.
+- Why: pruning is an optimization; it must never break the user's turn.
 
-### D4: Cache the dropped set, refresh on change
+### D6: Caching keyed by selection and session revision
 
 The plugin caches the dropped set keyed by the selection and the session
 revision, and re-invokes ctxed only when either changes.
 
-- Why: `session.hook("context")` may run on every dispatch; shelling out each
-  time is avoidable latency.
-- Alternative considered: invoke on every dispatch. Rejected.
+- Why: categorization is a model call and the hook may run every dispatch.
+- Note: the OpenCode Go / Copilot / cheap-model choice for the categorizer is
+  configuration.
 
-### D5: Configuration is a sidecar selection
+### D7: Configuration is a sidecar selection plus categorizer config
 
-The plugin reads the ctxed binary path (or `PATH`), the session export path, and
-the categories file plus selected category ids or explicit ids, from config/env.
+The plugin reads the ctxed binary path (or `PATH`), the categorizer model and
+transport (endpoint or `--categorizer-cmd`), and the active selection, from
+config/env.
 
-- Why: the selection is an explicit human decision recorded in the categories
-  file, not live state; the plugin only reads it.
-- Alternative considered: let the plugin infer categories. Rejected — that is
-  policy, and it belongs in ctxed.
-
-### D6: A small additive ctxed flag, `prune --ids-only`
+### D8: A small additive ctxed flag, `prune --ids-only`
 
 ctxed prints a JSON object with `droppedIds` (the resolved set, after orphan
 resolution) instead of a transcript.
 
-- Why: the plugin needs the dropped set to filter by id; the emitted transcript
-  only exposes the kept set.
+- Why: the plugin needs the dropped set to filter by id.
 - Alternative considered: compute the set in the plugin. Rejected — logic in the
   plugin.
 
-### D7: No logic in the plugin
-
-The plugin's only behavior is: run ctxed, parse `droppedIds`, remove matching
-messages, and fail-open. A test asserts no category or validity logic is present.
-
 ## Risks / Trade-offs
 
-- [OpenCode's plugin API is beta and may change] → the plugin is one hook and
-  pins the API version; churn is a small edit.
-- [The session export can be stale relative to live messages] → intentional:
-  the dropped set covers the historical entries the user selected; messages
-  created after the export are not in the set and are kept. Refreshing the
-  export is part of re-running `categorize`.
-- [Hook message ids might differ from export ids] → verify with a real dispatch
-  during implementation; both surfaces use `msg_…` ids.
-- [Shelling out per dispatch adds latency] → cache with refresh-on-change.
-- [ctxed not installed or not on PATH] → the binary path is configurable, and a
-  missing binary is a fail-open no-op with a reported error.
+- [Live message ids differ from export ids] → the entire id-based filter depends
+  on this. The functional test proves it against a real dispatch; if it fails,
+  the plugin matches on content/tool-id instead. This is the top functional
+  verification item.
+- [Categorization requires live ids to round-trip through ctxed] → the live
+  transcript handed to ctxed must carry the ids the dispatch hook sees; verified
+  by observing the request.
+- [OpenCode's plugin API is beta and may change] → pin the API version.
+- [A model call per selection is slow] → cache by selection and revision; make
+  the categorizer model configurable.
+- [ctxed not installed or not on PATH] → path is configurable; a missing binary
+  is a fail-open no-op with a reported error.
 
 ## Migration Plan
 
-Additive. A new `plugin/opencode/` directory and one new ctxed flag; removing the
-plugin restores default OpenCode behavior. Nothing in a session store is ever
-modified, so there is no data migration and no destructive failure mode.
+Additive: a new `plugin/opencode/` directory and one new ctxed flag. Removing the
+plugin restores default OpenCode behavior. Nothing in a session store is
+modified, so there is no destructive failure mode.
 
 ## Open Questions
 
-- The exact field names in the context hook's payload need to be pinned against a
-  real dispatch during implementation; this does not change any requirement.
+- The exact field names in the context hook's payload and of the live message
+  id: pinned against a real dispatch by the functional test.
+- Which cheap model to default the categorizer to (OpenCode Go vs Copilot).
+
+## Implementation findings (2026-10-04)
+
+Verified against OpenCode 2.0.19; see `docs/opencode-plugin-spike.md` for the
+full record.
+
+- **The dispatch hook works.** `session.hook("context")` fires, `event.messages`
+  is mutable, and a dropped message is genuinely absent from what the model
+  receives (proved live: the model answered "unknown" to a token it was never
+  shown). The plugin loads only as a single flat file under
+  `.opencode/plugins/` and only when the project has an `opencode.json`.
+- **The in-session command runs and can be driven headlessly.** The v2 server
+  exposes `POST /api/session/{sessionID}/command` (opId `session.command`) with
+  body `{name, text}`; the command registers via `ctx.command.transform` and
+  shows in `GET /api/command`. The server authenticates with HTTP Basic using
+  `OPENCODE_PASSWORD`, so the functional gate starts a real server
+  (`opencode serve`), creates a session, sets a model, prompts, and invokes
+  `/ctxed-prune` through that route. (`opencode run "/ctxed-prune"` sends the
+  text to the model instead — commands are a server/TUI surface.)
+- **The command needs the categories JSON on stdout.** `ctxed categorize --out -`
+  now prints the categories document instead of writing a file named `-`. This is
+  the output counterpart to the stdin input added in task 1.3, and is what the
+  plugin reads to present buckets.
+- **Everything in 4.x is asserted live** by `scripts/verify-functionally.sh
+  --opencode`: the command categorizes the live session, a selection is recorded,
+  the dropped bucket is absent from the request (the model cannot recall its
+  content), the stored session is unchanged, a message added after the selection
+  in a dropped bucket is also absent, and live ids equal the session's ids.
+- **A bucket spanning many messages is asserted, not assumed.** The scenario
+  builds a two-topic session where one topic spans several turns (7-9 entries),
+  and checks the plugin's own dispatch decision: every id in the dropped bucket
+  is absent from what it sent, every id in the kept bucket is present. It reads
+  `CTXED_PLUGIN_DEBUG_LOG`, so the assertion is deterministic and does not depend
+  on a model's memory.
+- **Attachment content travels with its message.** A file attachment arrives as
+  parts of a message (inlined text, and a tool-call/result pair), so dropping the
+  message drops the content; the scenario asserts the attachment-bearing message
+  is dropped and its text is not recallable.
+- **Tool content is dropped with its message (fixed).** The live request can
+  contain a `tool` message with a **null id** whose matching `tool-call` sits in
+  an earlier, id-bearing message. An id-only filter cannot name the result, so
+  the first implementation left it, and it **accumulated**: measured live, each
+  file read added ~2.2 KB that stayed in every later request (2 reads → ~4.5 KB,
+  growing linearly). The fix keeps the decision in ctxed: `prune --ids-only` now
+  also emits `droppedToolCallIds` (the tool-call ids the dropped entries issued
+  or answered), and the plugin drops any message whose content carries one. The
+  functional gate asserts both that a tool result is present in the session and
+  that null-id messages stay flat across dispatches.

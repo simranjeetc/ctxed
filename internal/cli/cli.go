@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,12 @@ const version = "0.1.0"
 
 // Run dispatches a command and returns its exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
+	return RunWithStdin(args, os.Stdin, stdout, stderr)
+}
+
+// RunWithStdin is Run with an explicit stdin, so a transcript can be piped in
+// (`ctxed categorize - …`) and tests can supply one without touching the OS.
+func RunWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		usage(stderr)
 		return ExitUsage
@@ -44,9 +51,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "drop":
 		return runDrop(args[1:], stdout, stderr)
 	case "categorize":
-		return runCategorize(args[1:], stdout, stderr)
+		return runCategorize(args[1:], stdin, stdout, stderr)
 	case "prune":
-		return runPrune(args[1:], stdout, stderr)
+		return runPrune(args[1:], stdin, stdout, stderr)
 	case "compact-instruction":
 		return runCompactInstruction(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -72,7 +79,12 @@ Usage:
   ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
   ctxed prune   <session> (--categories-file F --categories 1,3 | --ids id1,id2)
+                [--ids-only]
   ctxed compact-instruction <session> --categories-file F --categories 1,3
+
+  <session> may be a file path, or "-" to read a transcript on stdin.
+  On stdin, the categories file's session field is "-".
+  For categorize, --out "-" prints the categories document to stdout.
 
 Commands:
   inspect             print each entry: index, role, kind, tokens, first-line preview
@@ -80,6 +92,9 @@ Commands:
   categorize          group entries into high-level categories and write an editable file
   prune               emit the transcript with selected entries excluded (no write)
   compact-instruction print a Claude Code /compact instruction for the selected buckets
+
+Flags:
+  prune --ids-only   print {"droppedIds":[…]} (the resolved drop set) instead of a transcript
 
 Exit codes: 0 ok, 1 error, 2 usage, 3 refused (invalid or unsafe selection)
 `)
@@ -237,7 +252,19 @@ func splitArgs(args []string, valueFlags map[string]bool) (flags, pos []string) 
 	return flags, pos
 }
 
-func runCategorize(args []string, stdout, stderr io.Writer) int {
+// readSession returns the session bytes from a path, or from stdin when the
+// path is "-" or empty. The returned name is used for default output paths and
+// the categories file's session field.
+func readSession(in string, stdin io.Reader) (data []byte, name string, err error) {
+	if in == "" || in == "-" {
+		data, err = io.ReadAll(stdin)
+		return data, "-", err
+	}
+	data, err = os.ReadFile(in)
+	return data, in, err
+}
+
+func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("categorize", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	modelName := fs.String("model", "", "model name for the call and its tokenizer")
@@ -253,12 +280,15 @@ func runCategorize(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(flags); err != nil {
 		return parseErrExit(err, stderr)
 	}
-	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "ctxed categorize: expected exactly one session file")
+	if len(rest) > 1 {
+		fmt.Fprintln(stderr, "ctxed categorize: expected at most one session file")
 		return ExitUsage
 	}
-	in := rest[0]
-	data, err := os.ReadFile(in)
+	in := ""
+	if len(rest) == 1 {
+		in = rest[0]
+	}
+	data, name, err := readSession(in, stdin)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -295,11 +325,22 @@ func runCategorize(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	f.Session = in
+	f.Session = name
 
 	outPath := *out
 	if outPath == "" {
-		outPath = categoriesOut(in)
+		outPath = categoriesOut(name)
+	}
+	// `--out -` prints the categories file to stdout instead of writing it, so a
+	// plugin can categorize a live transcript without a temp file (the stdin
+	// counterpart to `categorize -`/`prune -`).
+	if outPath == "-" {
+		data, err := categorize.Marshal(f)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		fmt.Fprintf(stdout, "%s", data)
+		return ExitOK
 	}
 	if err := categorize.WriteFile(outPath, f); err != nil {
 		return fail(stderr, err)
@@ -311,23 +352,33 @@ func runCategorize(args []string, stdout, stderr io.Writer) int {
 	return ExitOK
 }
 
-func runPrune(args []string, stdout, stderr io.Writer) int {
+func runPrune(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	catsFile := fs.String("categories-file", "", "categories file")
 	cats := fs.String("categories", "", "comma-separated category ids to drop")
 	ids := fs.String("ids", "", "comma-separated stable entry ids to drop")
+	idsOnly := fs.Bool("ids-only", false, "emit the resolved dropped entry ids as JSON instead of a transcript")
 
 	flags, rest := splitArgs(args, valueFlagsPrune)
 	if err := fs.Parse(flags); err != nil {
 		return parseErrExit(err, stderr)
 	}
-	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "ctxed prune: expected exactly one session file")
+	idsSet := false
+	for _, f := range flags {
+		if name := strings.TrimLeft(f, "-"); name == "ids" || strings.HasPrefix(name, "ids=") {
+			idsSet = true
+		}
+	}
+	if len(rest) > 1 {
+		fmt.Fprintln(stderr, "ctxed prune: expected at most one session file")
 		return ExitUsage
 	}
-	in := rest[0]
-	data, err := os.ReadFile(in)
+	in := ""
+	if len(rest) == 1 {
+		in = rest[0]
+	}
+	data, _, err := readSession(in, stdin)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -362,7 +413,7 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "ctxed prune: %v\n", err)
 			return ExitRefused
 		}
-	case *ids != "":
+	case *ids != "" || idsSet:
 		pruneIDs = splitList(*ids)
 	default:
 		fmt.Fprintln(stderr, "ctxed prune: provide --categories-file with --categories, or --ids")
@@ -377,6 +428,9 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 	final, adjustments := prune.ResolveOrphans(doc, indices)
 	for _, a := range adjustments {
 		fmt.Fprintln(stderr, "adjustment: "+a)
+	}
+	if *idsOnly {
+		return writeDroppedIDs(stdout, stderr, doc, final)
 	}
 	doc.Drop(final)
 	edited, err := write(doc)
@@ -446,6 +500,50 @@ func runCompactInstruction(args []string, stdout, stderr io.Writer) int {
 	return ExitOK
 }
 
+// writeDroppedIDs prints the resolved drop set as a JSON object on stdout, so a
+// dispatch plugin can filter live messages by id. ids are emitted in session
+// order, which makes the output deterministic.
+//
+// It also reports the tool-call ids that the dropped entries issued or answered
+// (`droppedToolCallIds`). A plugin needs these because a tool result can live in
+// a live message that carries no id of its own; the plugin can then drop such a
+// message by matching the call id inside it. The set is deduplicated and sorted,
+// so the output stays deterministic.
+func writeDroppedIDs(stdout, stderr io.Writer, doc *session.Document, indices []int) int {
+	drop := make(map[int]bool, len(indices))
+	for _, i := range indices {
+		drop[i] = true
+	}
+	dropped := make([]string, 0, len(indices))
+	callSet := map[string]bool{}
+	for _, e := range doc.Entries {
+		if !drop[e.Index] {
+			continue
+		}
+		dropped = append(dropped, e.ID)
+		for _, id := range e.CallIDs {
+			callSet[id] = true
+		}
+		for _, id := range e.ResultIDs {
+			callSet[id] = true
+		}
+	}
+	callIDs := make([]string, 0, len(callSet))
+	for id := range callSet {
+		callIDs = append(callIDs, id)
+	}
+	sort.Strings(callIDs)
+	b, err := json.Marshal(struct {
+		DroppedIDs         []string `json:"droppedIds"`
+		DroppedToolCallIDs []string `json:"droppedToolCallIds"`
+	}{DroppedIDs: dropped, DroppedToolCallIDs: callIDs})
+	if err != nil {
+		return fail(stderr, err)
+	}
+	fmt.Fprintf(stdout, "%s\n", b)
+	return ExitOK
+}
+
 func envOr(v, key string) string {
 	if v != "" {
 		return v
@@ -493,14 +591,14 @@ func write(doc *session.Document) ([]byte, error) {
 }
 
 type stats struct {
-	Source         string        `json:"source"`
-	Input          string        `json:"input"`
-	Output         string        `json:"output"`
-	EntriesBefore  int           `json:"entriesBefore"`
-	EntriesAfter   int           `json:"entriesAfter"`
-	TokensBefore   int           `json:"tokensBefore"`
-	TokensAfter    int           `json:"tokensAfter"`
-	RemovedIndices []int         `json:"removedIndices"`
+	Source         string                `json:"source"`
+	Input          string                `json:"input"`
+	Output         string                `json:"output"`
+	EntriesBefore  int                   `json:"entriesBefore"`
+	EntriesAfter   int                   `json:"entriesAfter"`
+	TokensBefore   int                   `json:"tokensBefore"`
+	TokensAfter    int                   `json:"tokensAfter"`
+	RemovedIndices []int                 `json:"removedIndices"`
 	Tokenizer      inspect.TokenizerInfo `json:"tokenizer"`
 }
 

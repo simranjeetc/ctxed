@@ -151,9 +151,15 @@ func ReadFile(path string, doc *session.Document) (File, error) {
 	return Load(data, doc)
 }
 
+// Marshal renders the categories file as JSON, the same bytes WriteFile writes
+// (minus the trailing newline), so a caller can print it to stdout.
+func Marshal(f File) ([]byte, error) {
+	return json.MarshalIndent(f, "", "  ")
+}
+
 // WriteFile writes the categories file.
 func WriteFile(path string, f File) error {
-	data, err := json.MarshalIndent(f, "", "  ")
+	data, err := Marshal(f)
 	if err != nil {
 		return err
 	}

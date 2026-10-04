@@ -35,10 +35,26 @@ ctxed drop       <session> --indices 3,7,9 [--out FILE] [--json] [--force] \
 ctxed categorize <session> [--model M] [--base-url URL] [--api-key K] \
                  [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
 ctxed prune      <session> (--categories-file F --categories 1,3 | --ids id1,id2)
+                 [--ids-only]
 ctxed compact-instruction <session> --categories-file F --categories 1,3
 ```
 
-The session path may appear before or after the flags.
+The session path may appear before or after the flags. A `<session>` of `-`
+reads the transcript on stdin, so a plugin can categorize or prune the live
+messages without exporting the session first:
+
+```sh
+$ opencode session export <id> | ctxed categorize - --model M --out cats.json
+$ opencode session export <id> | ctxed prune - --categories-file cats.json --categories 1 --ids-only
+```
+
+A `--out` of `-` is the output counterpart: `categorize` prints the categories
+document to stdout instead of writing a file, so a caller never manages a temp
+path.
+
+```sh
+$ opencode session export <id> | ctxed categorize - --model M --out -
+```
 
 ### inspect
 
@@ -122,6 +138,23 @@ The retained detail is model-mediated: the instruction biases the summary, it
 does not guarantee a specific entry survives. A future change adds a Claude Code
 mod that drops the selected buckets exactly; see
 `openspec/changes/add-claude-code-live-prune`.
+
+### ids-only — the drop set for a live plugin
+
+`--ids-only` prints just the resolved set of **dropped** entry ids — after orphan
+resolution — as JSON, instead of a transcript. A plugin that holds live message
+objects (OpenCode's dispatch hook) filters by id without re-serialising the
+transcript on every dispatch:
+
+```sh
+$ ctxed prune session.json --categories-file session.categories.json --categories 1 --ids-only
+{"droppedIds":["msg_101f9625c001NLzjIh2rzpuhNj"],"droppedToolCallIds":["call_00_…"]}
+```
+
+`droppedToolCallIds` names the tool-call ids the dropped entries issued or
+answered, so a plugin can drop a tool result that lives in a message with no id
+of its own. The stored session is still never written. See
+[`plugin/opencode/`](plugin/opencode/) for the OpenCode plugin that consumes it.
 
 ### Model configuration
 

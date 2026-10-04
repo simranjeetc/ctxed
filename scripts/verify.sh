@@ -205,9 +205,11 @@ check_plugin_opencode_tests() {
 check_plugin_opencode_no_policy() {
   local f="plugin/opencode/src/core.ts"
   [[ -f "$f" ]] || { skip "plugin:opencode:no-policy" "not on this branch"; return 0; }
-  # The plugin must carry no categorization/policy: it may not classify or
-  # decide buckets, only run ctxed and filter by id.
-  ! grep -qiE 'categoriz|bucket|label' "$f"
+  # The plugin must carry no prune policy: it runs ctxed, presents the buckets
+  # ctxed returned, and filters by id. It may not decide bucket membership or
+  # resolve a selection itself. The precise guard is the plugin's own
+  # no-policy.test.ts; this is the coarse offline mirror.
+  ! grep -qiE 'orphan|validity|classif' "$f"
 }
 
 # ---------------------------------------------------------------------------
