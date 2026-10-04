@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -439,20 +440,40 @@ func runPrune(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // writeDroppedIDs prints the resolved drop set as a JSON object on stdout, so a
 // dispatch plugin can filter live messages by id. ids are emitted in session
 // order, which makes the output deterministic.
+//
+// It also reports the tool-call ids that the dropped entries issued or answered
+// (`droppedToolCallIds`). A plugin needs these because a tool result can live in
+// a live message that carries no id of its own; the plugin can then drop such a
+// message by matching the call id inside it. The set is deduplicated and sorted,
+// so the output stays deterministic.
 func writeDroppedIDs(stdout, stderr io.Writer, doc *session.Document, indices []int) int {
 	drop := make(map[int]bool, len(indices))
 	for _, i := range indices {
 		drop[i] = true
 	}
 	dropped := make([]string, 0, len(indices))
+	callSet := map[string]bool{}
 	for _, e := range doc.Entries {
-		if drop[e.Index] {
-			dropped = append(dropped, e.ID)
+		if !drop[e.Index] {
+			continue
+		}
+		dropped = append(dropped, e.ID)
+		for _, id := range e.CallIDs {
+			callSet[id] = true
+		}
+		for _, id := range e.ResultIDs {
+			callSet[id] = true
 		}
 	}
+	callIDs := make([]string, 0, len(callSet))
+	for id := range callSet {
+		callIDs = append(callIDs, id)
+	}
+	sort.Strings(callIDs)
 	b, err := json.Marshal(struct {
-		DroppedIDs []string `json:"droppedIds"`
-	}{DroppedIDs: dropped})
+		DroppedIDs         []string `json:"droppedIds"`
+		DroppedToolCallIDs []string `json:"droppedToolCallIds"`
+	}{DroppedIDs: dropped, DroppedToolCallIDs: callIDs})
 	if err != nil {
 		return fail(stderr, err)
 	}

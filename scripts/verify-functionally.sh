@@ -723,9 +723,55 @@ print(" ".join(texts).lower())')"
     fail "opencode:anti-drift" "assistant said: $drift"
   fi
 
+  # Regression: a dropped tool result must not accumulate in the request. Read a
+  # file (a tool call + id-less result), before the selection, then confirm the
+  # null-id content does not grow across later dispatches. Without the
+  # droppedToolCallIds fix this grows every turn.
+  local bulk="$dir/bulk-$attachsuffix.txt"
+  python3 -c 'import sys; open(sys.argv[1],"w").write("Z"*4000)' "$bulk"
+  # A file read lands in whichever bucket the stub assigns; add its turn before
+  # the selection so it is part of the dropped set if it falls in the alpha half.
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"TOPIC-ALPHA: read the file at $bulk and reply with only: ok\",\"delivery\":\"queue\"}" >/dev/null
+  sleep 14
+  local before_bytes after_bytes
+  before_bytes="$(tail -1 "$dir/hook.log" 2>/dev/null | python3 -c '
+import json,sys
+try: print(sum(1 for m in json.loads(sys.stdin.read())["after"] if m is None))
+except Exception: print(-1)')"
+  # Confirm the file read really produced a tool result in the session, so the
+  # assertion below is meaningful (otherwise a flat zero proves nothing).
+  local session_tools
+  session_tools="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+n=0
+for m in d.get("data",[]):
+    if m.get("type")=="assistant":
+        n += sum(1 for c in m.get("content",[]) if c.get("type")=="tool")
+print(n)')"
+  if [[ "${session_tools:-0}" -ge 1 ]]; then
+    pass "opencode:tool result present in the session ($session_tools tool part(s))"
+  else
+    fail "opencode:tool result present in the session" "the file read produced no tool part"
+  fi
+  # Two more dispatches; the count of null-id messages must stay flat.
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" '{"text":"Reply with only: ok","delivery":"queue"}' >/dev/null; sleep 8
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" '{"text":"Reply with only: ok","delivery":"queue"}' >/dev/null; sleep 8
+  after_bytes="$(tail -1 "$dir/hook.log" 2>/dev/null | python3 -c '
+import json,sys
+try: print(sum(1 for m in json.loads(sys.stdin.read())["after"] if m is None))
+except Exception: print(-1)')"
+  if [[ "$after_bytes" -ge 0 && "$after_bytes" -le "${before_bytes:-0}" ]]; then
+    pass "opencode:no tool-result accumulation (null-id messages flat at $after_bytes)"
+  else
+    fail "opencode:no tool-result accumulation" "null-id messages grew from ${before_bytes:-?} to $after_bytes"
+  fi
+
   # Delete the scratch session while the server is still up.
   abort_opencode "$dir" "$sid"
 }
+
 
 # ---------------------------------------------------------------------------
 # Claude Code functional scenario

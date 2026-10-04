@@ -173,12 +173,13 @@ full record.
   parts of a message (inlined text, and a tool-call/result pair), so dropping the
   message drops the content; the scenario asserts the attachment-bearing message
   is dropped and its text is not recallable.
-- **Known limit: an id-less tool result can survive an id-based drop.** The live
-  message list can contain a `tool` message with a **null id** whose matching
-  `tool-call` sits in an earlier, id-bearing message. The plugin filters by id,
-  so it cannot name the result and leaves it. Observed live: dropping the
-  tool-call message left the null-id result message in the request, which
-  OpenCode still accepted. ctxed's orphan resolution would catch this on a
-  document, but the live hook filters ids, so the repair does not run. This is
-  acceptable for now (the request succeeds, no dangling-result error observed)
-  but is the first thing to revisit if a provider ever rejects it.
+- **Tool content is dropped with its message (fixed).** The live request can
+  contain a `tool` message with a **null id** whose matching `tool-call` sits in
+  an earlier, id-bearing message. An id-only filter cannot name the result, so
+  the first implementation left it, and it **accumulated**: measured live, each
+  file read added ~2.2 KB that stayed in every later request (2 reads → ~4.5 KB,
+  growing linearly). The fix keeps the decision in ctxed: `prune --ids-only` now
+  also emits `droppedToolCallIds` (the tool-call ids the dropped entries issued
+  or answered), and the plugin drops any message whose content carries one. The
+  functional gate asserts both that a tool result is present in the session and
+  that null-id messages stay flat across dispatches.

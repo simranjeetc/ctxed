@@ -8,11 +8,14 @@ import {
   buildArgs,
   buildCategorizeArgs,
   categorizeLive,
+  carriesDroppedToolCall,
   extractJsonObject,
+  filterDropped,
   filterMessages,
   formatBuckets,
   loadConfig,
   parseBuckets,
+  parseDropped,
   parseDroppedIds,
   parseSelection,
   parseSelectionInput,
@@ -402,4 +405,63 @@ test("parseSelectionInput accepts bucket ids and nothing else", () => {
   assert.deepEqual(parseSelectionInput("1 3 5"), ["1", "3", "5"])
   assert.deepEqual(parseSelectionInput(""), [])
   assert.deepEqual(parseSelectionInput("msg_abc"), [], "message ids are not selectable")
+})
+
+// --- tool-call id matching: a dropped call's result has no message id -------
+
+test("parseDropped reads both ids and dropped tool-call ids", () => {
+  const d = parseDropped('{"droppedIds":["msg_a"],"droppedToolCallIds":["call_1","call_2"]}')
+  assert.deepEqual(d.ids, ["msg_a"])
+  assert.deepEqual(d.toolCallIds, ["call_1", "call_2"])
+  // The optional field is tolerated when absent.
+  assert.deepEqual(parseDropped('{"droppedIds":["msg_b"]}').toolCallIds, [])
+})
+
+test("carriesDroppedToolCall matches a tool part by its id", () => {
+  const drop = new Set(["call_1"])
+  assert.equal(carriesDroppedToolCall({ id: undefined, content: [{ type: "tool-result", id: "call_1" }] }, drop), true)
+  assert.equal(carriesDroppedToolCall({ id: undefined, content: [{ type: "tool-call", id: "call_1" }] }, drop), true)
+  assert.equal(carriesDroppedToolCall({ id: undefined, content: [{ type: "tool-result", id: "call_9" }] }, drop), false)
+  assert.equal(carriesDroppedToolCall({ id: undefined, content: [{ type: "text", text: "hi" }] }, drop), false)
+  assert.equal(carriesDroppedToolCall({ id: undefined }, drop), false)
+})
+
+test("filterDropped removes by message id and by carried tool-call id", () => {
+  const messages = [
+    { id: "msg_u", role: "user", content: [{ type: "text", text: "hi" }] },
+    { id: "msg_a", role: "assistant", content: [{ type: "tool-call", id: "call_1" }] },
+    { id: undefined, role: "tool", content: [{ type: "tool-result", id: "call_1" }] },
+    { id: "msg_k", role: "assistant", content: [{ type: "text", text: "keep" }] },
+  ]
+  const out = filterDropped(messages, new Set(["msg_a"]), new Set(["call_1"]))
+  assert.deepEqual(
+    out.map((m) => m.id),
+    ["msg_u", "msg_k"],
+    "the id-less result for a dropped call must go too",
+  )
+})
+
+test("applyPrune drops an id-less tool result for a dropped call", async () => {
+  // ctxed names the dropped message and the tool-call ids it answered.
+  const path = stubCtxed('#!/bin/sh\ncat >/dev/null\necho \'{"droppedIds":["msg_a"],"droppedToolCallIds":["call_1"]}\'\n')
+  const cfg = config({ ctxedPath: path })
+  const result = await applyPrune({
+    messages: [
+      { id: "msg_u", role: "user", content: [{ type: "text", text: "hi" }] },
+      { id: "msg_a", role: "assistant", content: [{ type: "tool-call", id: "call_1" }] },
+      { id: undefined, role: "tool", content: [{ type: "tool-result", id: "call_1" }] },
+      { id: "msg_k", role: "assistant", content: [{ type: "text", text: "keep" }] },
+    ],
+    config: cfg,
+    selection: selection(),
+    revision: "r1",
+    cache: new PruneCache(),
+    run: (args, stdin) => runCtxed(args, cfg.timeoutMs, stdin),
+    report: () => {},
+  })
+  assert.deepEqual(
+    result.messages.map((m) => m.id),
+    ["msg_u", "msg_k"],
+  )
+  assert.equal(result.dropped, 2, "both the call message and its id-less result are dropped")
 })

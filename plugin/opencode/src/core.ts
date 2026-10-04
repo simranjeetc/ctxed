@@ -161,6 +161,31 @@ export function parseDroppedIds(stdout: string): string[] {
 }
 
 /**
+ * The full drop decision ctxed returns: the message ids to drop, and the tool-call
+ * ids those messages issued or answered. The tool-call ids let the plugin drop a
+ * tool result that lives in a live message carrying no id of its own.
+ */
+export interface DroppedSet {
+  ids: string[]
+  toolCallIds: string[]
+}
+
+/** Parses the id-only output into a DroppedSet. */
+export function parseDropped(stdout: string): DroppedSet {
+  const ids = parseDroppedIds(stdout)
+  let toolCallIds: string[] = []
+  try {
+    const parsed = JSON.parse(stdout) as { droppedToolCallIds?: unknown }
+    if (Array.isArray(parsed.droppedToolCallIds)) {
+      toolCallIds = parsed.droppedToolCallIds.filter((x): x is string => typeof x === "string")
+    }
+  } catch {
+    // parseDroppedIds already validated the document; a missing optional field is fine.
+  }
+  return { ids, toolCallIds }
+}
+
+/**
  * Removes only messages whose id is in the dropped set. Order and every other
  * message are preserved; the input array is not mutated.
  */
@@ -171,16 +196,45 @@ export function filterMessages<T extends LiveMessage>(
   return messages.filter((message) => !(typeof message.id === "string" && dropped.has(message.id)))
 }
 
-/** Caches dropped-id results, keyed by selection and revision. */
-export class PruneCache {
-  private readonly entries = new Map<string, string[]>()
+/**
+ * True when a live message carries a content part (tool-call or tool-result)
+ * whose id is in the dropped tool-call set. Such a message has no id of its own
+ * to match, but it belongs to a dropped entry and must not be sent.
+ */
+export function carriesDroppedToolCall(message: LiveMessage, droppedToolCalls: ReadonlySet<string>): boolean {
+  const content = (message as { content?: unknown }).content
+  if (!Array.isArray(content)) return false
+  for (const part of content) {
+    if (part === null || typeof part !== "object") continue
+    const p = part as { type?: unknown; id?: unknown }
+    if ((p.type === "tool-call" || p.type === "tool-result" || p.type === "tool") && typeof p.id === "string" && droppedToolCalls.has(p.id)) {
+      return true
+    }
+  }
+  return false
+}
 
-  get(key: string): string[] | undefined {
+/** Drops messages by id, and any message carrying a dropped tool-call id. */
+export function filterDropped<T extends LiveMessage>(
+  messages: readonly T[],
+  dropped: ReadonlySet<string>,
+  droppedToolCalls: ReadonlySet<string>,
+): T[] {
+  return messages.filter(
+    (message) => !(typeof message.id === "string" && dropped.has(message.id)) && !carriesDroppedToolCall(message, droppedToolCalls),
+  )
+}
+
+/** Caches drop decisions, keyed by selection and revision. */
+export class PruneCache {
+  private readonly entries = new Map<string, DroppedSet>()
+
+  get(key: string): DroppedSet | undefined {
     return this.entries.get(key)
   }
 
-  set(key: string, ids: string[]): void {
-    this.entries.set(key, ids)
+  set(key: string, value: DroppedSet): void {
+    this.entries.set(key, value)
   }
 
   /** Drops every entry; used when the selection changes. */
@@ -262,6 +316,7 @@ export interface ApplyInput<T extends LiveMessage> {
 export interface ApplyResult<T extends LiveMessage> {
   messages: T[]
   droppedIds: string[]
+  droppedToolCallIds: string[]
   dropped: number
   cached: boolean
   error?: string
@@ -280,37 +335,37 @@ export async function applyPrune<T extends LiveMessage>(input: ApplyInput<T>): P
   const { messages, config, selection, revision, cache, run, report } = input
 
   if (!config.enabled) {
-    return { messages: [...messages], droppedIds: [], dropped: 0, cached: false }
+    return { messages: [...messages], droppedIds: [], droppedToolCallIds: [], dropped: 0, cached: false }
   }
 
   const key = cacheKey(config, selection, revision)
-  let droppedIds = cache.get(key)
-  let cached = droppedIds !== undefined
+  let decision = cache.get(key)
+  let cached = decision !== undefined
 
-  if (droppedIds === undefined) {
+  if (decision === undefined) {
     const result = await run(buildArgs(config, selection), transcriptJson(messages))
     if (result.code !== 0) {
       const detail = (result.stderr || String(result.error ?? "")).trim()
       const error = `ctxed exited ${result.code}${detail === "" ? "" : `: ${detail}`}`
       report(`ctxed-opencode: ${error}`, result.error)
-      return { messages: [...messages], droppedIds: [], dropped: 0, cached: false, error }
+      return { messages: [...messages], droppedIds: [], droppedToolCallIds: [], dropped: 0, cached: false, error }
     }
     try {
-      droppedIds = parseDroppedIds(result.stdout)
+      decision = parseDropped(result.stdout)
     } catch (cause) {
       const error = `ctxed output could not be parsed: ${(cause as Error).message}`
       report(`ctxed-opencode: ${error}`, cause)
-      return { messages: [...messages], droppedIds: [], dropped: 0, cached: false, error }
+      return { messages: [...messages], droppedIds: [], droppedToolCallIds: [], dropped: 0, cached: false, error }
     }
-    cache.set(key, droppedIds)
+    cache.set(key, decision)
     cached = false
   }
 
-  const droppedSet = new Set(droppedIds)
-  const filtered = filterMessages(messages, droppedSet)
+  const filtered = filterDropped(messages, new Set(decision.ids), new Set(decision.toolCallIds))
   return {
     messages: filtered,
-    droppedIds,
+    droppedIds: decision.ids,
+    droppedToolCallIds: decision.toolCallIds,
     dropped: messages.length - filtered.length,
     cached,
   }

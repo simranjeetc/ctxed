@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -656,8 +657,33 @@ func TestPruneIDsOnlyNothingDropped(t *testing.T) {
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}
-	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[]}` {
-		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[]}`)
+	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[],"droppedToolCallIds":[]}` {
+		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[],"droppedToolCallIds":[]}`)
+	}
+}
+
+func TestPruneIDsOnlyEmitsDroppedToolCallIDs(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	// Entry 1 is a tool-call entry: dropping it must also report the tool-call
+	// ids it issued, so a plugin can drop the matching result even when the live
+	// result message carries no id of its own.
+	code, stdout, stderr := run("prune", in, "--ids", "msg_101f9625c001NLzjIh2rzpuhNj", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	var parsed struct {
+		DroppedIDs         []string `json:"droppedIds"`
+		DroppedToolCallIDs []string `json:"droppedToolCallIds"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("parse: %v\n%s", err, stdout)
+	}
+	if len(parsed.DroppedToolCallIDs) == 0 {
+		t.Fatalf("expected dropped tool-call ids for a tool-call entry, got none: %s", stdout)
+	}
+	// Deterministic ordering.
+	if !sort.StringsAreSorted(parsed.DroppedToolCallIDs) {
+		t.Fatalf("droppedToolCallIds not sorted: %v", parsed.DroppedToolCallIDs)
 	}
 }
 
@@ -668,8 +694,8 @@ func TestPruneIDsOnlyEmptySelection(t *testing.T) {
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}
-	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[]}` {
-		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[]}`)
+	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[],"droppedToolCallIds":[]}` {
+		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[],"droppedToolCallIds":[]}`)
 	}
 }
 
