@@ -58,6 +58,23 @@ ctxed inspect  ~/.claude/projects/<project>/<session>.jsonl
 ctxed drop     ~/.claude/projects/<project>/<session>.jsonl --indices 3,7
 ```
 
+**Live prune.** Hooks (`~/.claude/settings.json`) and in-process mods cannot
+rewrite the outbound message list, and the `.jsonl` transcript is written
+asynchronously — editing it mid-session does nothing until a `--resume`
+relaunch. The only live, message-replacing surface is compaction. `ctxed
+compact-instruction` renders the bucket selection as a `/compact` instruction to
+paste into the running session:
+
+```sh
+ctxed categorize          ~/.claude/projects/<project>/<session>.jsonl --model gpt-4o
+ctxed compact-instruction ~/.claude/projects/<project>/<session>.jsonl \
+    --categories-file session.categories.json --categories 2
+# paste the printed sentence after `/compact ` in the session
+```
+
+See `openspec/changes/add-claude-code-live-prune` for the decision record and
+the follow-up exact-drop mod.
+
 ### OpenCode — export, edit
 
 OpenCode's source of truth is a SQLite database

@@ -35,6 +35,7 @@ ctxed drop       <session> --indices 3,7,9 [--out FILE] [--json] [--force] \
 ctxed categorize <session> [--model M] [--base-url URL] [--api-key K] \
                  [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
 ctxed prune      <session> (--categories-file F --categories 1,3 | --ids id1,id2)
+ctxed compact-instruction <session> --categories-file F --categories 1,3
 ```
 
 The session path may appear before or after the flags.
@@ -94,6 +95,34 @@ A harness plugin substitutes that transcript at dispatch (see
 orphan a tool result, ctxed drops the dependent entry too and reports it on
 stderr as an `adjustment:` line.
 
+### compact-instruction — prune a live Claude Code session
+
+Claude Code cannot rewrite the outbound request from a hook, so its live prune
+uses compaction instead. `compact-instruction` turns a category selection into a
+single sentence naming the buckets to keep and drop, which you paste after
+`/compact ` in the running session:
+
+```sh
+$ ctxed compact-instruction ~/.claude/projects/<project>/<session>.jsonl \
+    --categories-file session.categories.json --categories 2
+
+When you compact this session, keep the context about Context editor design discussion, and drop the context about Adapter implementation notes.
+```
+
+Then, in the same session:
+
+```text
+/compact When you compact this session, keep the context about … and drop the context about …
+```
+
+The instruction is deterministic, offline, and calls no model — it only reads
+the categories file. Claude Code's own compaction rewrites history in place, so
+the prune lands live, in the same session, with no relaunch and no file edit.
+The retained detail is model-mediated: the instruction biases the summary, it
+does not guarantee a specific entry survives. A future change adds a Claude Code
+mod that drops the selected buckets exactly; see
+`openspec/changes/add-claude-code-live-prune`.
+
 ### Model configuration
 
 `categorize` reaches a model two ways:
@@ -115,6 +144,18 @@ reachable only through a CLI.
 
 ```sh
 ctxed inspect ~/.claude/projects/<project>/<session>.jsonl
+```
+
+Claude Code's hooks cannot rewrite the outbound messages, so it cannot be
+pruned at dispatch. Instead, categorize the transcript, pick the buckets to
+drop, and turn that selection into a `/compact` instruction applied to the
+running session:
+
+```sh
+ctxed categorize          ~/.claude/projects/<project>/<session>.jsonl --model gpt-4o
+ctxed compact-instruction ~/.claude/projects/<project>/<session>.jsonl \
+    --categories-file session.categories.json --categories 2
+# then paste the printed sentence after `/compact ` in the session
 ```
 
 **OpenCode** — sessions live in SQLite, so export first:
