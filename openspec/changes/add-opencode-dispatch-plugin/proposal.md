@@ -19,7 +19,8 @@ change.
 
 ## What Changes
 
-- A new OpenCode plugin (TypeScript, `@opencode-ai/plugin`) that hooks
+- A new OpenCode plugin (TypeScript, `@opencode/plugin`, the v2 API that
+  exposes `session.hook("context")`) that hooks
   `session.hook("context")`, obtains the resolved prune set from ctxed, and
   removes those messages from the outbound transcript for that dispatch.
 - A small, additive ctxed flag: `prune --ids-only` prints the resolved set of

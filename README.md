@@ -35,6 +35,7 @@ ctxed drop       <session> --indices 3,7,9 [--out FILE] [--json] [--force] \
 ctxed categorize <session> [--model M] [--base-url URL] [--api-key K] \
                  [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
 ctxed prune      <session> (--categories-file F --categories 1,3 | --ids id1,id2)
+                 [--ids-only]
 ```
 
 The session path may appear before or after the flags.
@@ -93,6 +94,19 @@ A harness plugin substitutes that transcript at dispatch (see
 [`docs/plugin-contract.md`](docs/plugin-contract.md)). If a selection would
 orphan a tool result, ctxed drops the dependent entry too and reports it on
 stderr as an `adjustment:` line.
+
+`--ids-only` prints just the resolved set of **dropped** entry ids — after orphan
+resolution — as JSON, instead of a transcript. A plugin that holds live message
+objects (OpenCode's dispatch hook) filters by id without re-serialising the
+transcript on every dispatch:
+
+```sh
+$ ctxed prune session.json --categories-file session.categories.json --categories 1 --ids-only
+{"droppedIds":["msg_101f9625c001NLzjIh2rzpuhNj"]}
+```
+
+The stored session is still never written. See
+[`plugin/opencode/`](plugin/opencode/) for the OpenCode plugin that consumes it.
 
 ### Model configuration
 
