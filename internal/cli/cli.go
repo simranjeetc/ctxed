@@ -14,6 +14,7 @@ import (
 
 	"github.com/simranjeetc/ctxed/internal/adapter"
 	"github.com/simranjeetc/ctxed/internal/categorize"
+	"github.com/simranjeetc/ctxed/internal/compact"
 	"github.com/simranjeetc/ctxed/internal/inspect"
 	"github.com/simranjeetc/ctxed/internal/model"
 	"github.com/simranjeetc/ctxed/internal/prune"
@@ -46,6 +47,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runCategorize(args[1:], stdout, stderr)
 	case "prune":
 		return runPrune(args[1:], stdout, stderr)
+	case "compact-instruction":
+		return runCompactInstruction(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return ExitOK
@@ -69,12 +72,14 @@ Usage:
   ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
   ctxed prune   <session> (--categories-file F --categories 1,3 | --ids id1,id2)
+  ctxed compact-instruction <session> --categories-file F --categories 1,3
 
 Commands:
-  inspect     print each entry: index, role, kind, tokens, first-line preview
-  drop        write a copy of the session with the given entries removed
-  categorize  group entries into high-level categories and write an editable file
-  prune       emit the transcript with selected entries excluded (no write)
+  inspect             print each entry: index, role, kind, tokens, first-line preview
+  drop                write a copy of the session with the given entries removed
+  categorize          group entries into high-level categories and write an editable file
+  prune               emit the transcript with selected entries excluded (no write)
+  compact-instruction print a Claude Code /compact instruction for the selected buckets
 
 Exit codes: 0 ok, 1 error, 2 usage, 3 refused (invalid or unsafe selection)
 `)
@@ -202,6 +207,7 @@ var (
 	valueFlagsDrop       = map[string]bool{"indices": true, "out": true, "model": true, "tokenizer": true}
 	valueFlagsCategorize = map[string]bool{"model": true, "tokenizer": true, "base-url": true, "api-key": true, "categorizer-cmd": true, "max-categories": true, "out": true, "max-input-bytes": true}
 	valueFlagsPrune      = map[string]bool{"categories-file": true, "categories": true, "ids": true}
+	valueFlagsCompact    = map[string]bool{"categories-file": true, "categories": true}
 )
 
 // splitArgs separates flags from positional arguments so a session file may
@@ -380,6 +386,63 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 	if _, err := stdout.Write(edited); err != nil {
 		return fail(stderr, err)
 	}
+	return ExitOK
+}
+
+// runCompactInstruction renders the text to paste after `/compact ` in a live
+// Claude Code session. It reads the session only to validate the categories
+// file; it writes nothing and drops nothing.
+func runCompactInstruction(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("compact-instruction", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	catsFile := fs.String("categories-file", "", "categories file")
+	cats := fs.String("categories", "", "comma-separated category ids to drop")
+
+	flags, rest := splitArgs(args, valueFlagsCompact)
+	if err := fs.Parse(flags); err != nil {
+		return parseErrExit(err, stderr)
+	}
+	if len(rest) != 1 {
+		fmt.Fprintln(stderr, "ctxed compact-instruction: expected exactly one session file")
+		return ExitUsage
+	}
+	if strings.TrimSpace(*catsFile) == "" {
+		fmt.Fprintln(stderr, "ctxed compact-instruction: --categories-file is required")
+		return ExitUsage
+	}
+	if strings.TrimSpace(*cats) == "" {
+		fmt.Fprintln(stderr, "ctxed compact-instruction: --categories is required")
+		return ExitUsage
+	}
+
+	data, err := os.ReadFile(rest[0])
+	if err != nil {
+		return fail(stderr, err)
+	}
+	doc, code := load(data, stderr)
+	if code != ExitOK {
+		return code
+	}
+	raw, err := os.ReadFile(*catsFile)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	f, err := categorize.Load(raw, doc)
+	if err != nil {
+		fmt.Fprintf(stderr, "ctxed compact-instruction: %v\n", err)
+		return ExitRefused
+	}
+	sel, err := prune.ParseIndices(*cats)
+	if err != nil {
+		fmt.Fprintf(stderr, "ctxed compact-instruction: %v\n", err)
+		return ExitUsage
+	}
+	instruction, err := compact.Instruction(f, sel)
+	if err != nil {
+		fmt.Fprintf(stderr, "ctxed compact-instruction: %v\n", err)
+		return ExitRefused
+	}
+	fmt.Fprintln(stdout, instruction)
 	return ExitOK
 }
 

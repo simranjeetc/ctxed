@@ -534,6 +534,89 @@ func TestPluginRoleThinSubstitution(t *testing.T) {
 	}
 }
 
+func TestCompactInstructionByCategory(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	before, _ := os.ReadFile(in)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+
+	code, stdout, stderr := run("compact-instruction", in, "--categories-file", cats, "--categories", "2")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	line := strings.TrimSpace(stdout)
+	if strings.Count(stdout, "\n") != 1 {
+		t.Fatalf("expected exactly one instruction line, got %q", stdout)
+	}
+	if !strings.Contains(line, "keep the context about Context editor design discussion") {
+		t.Fatalf("kept bucket not named by label:\n%s", stdout)
+	}
+	if !strings.Contains(line, "drop the context about Adapter implementation notes") {
+		t.Fatalf("dropped bucket not named by label:\n%s", stdout)
+	}
+	after, _ := os.ReadFile(in)
+	if !bytes.Equal(before, after) {
+		t.Fatal("compact-instruction modified the session file")
+	}
+}
+
+func TestCompactInstructionIsDeterministic(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	codeA, a, _ := run("compact-instruction", in, "--categories-file", cats, "--categories", "1")
+	codeB, b, _ := run("compact-instruction", in, "--categories-file", cats, "--categories", "1")
+	if codeA != cli.ExitOK || codeB != cli.ExitOK {
+		t.Fatalf("exits %d, %d", codeA, codeB)
+	}
+	if a != b {
+		t.Fatalf("not deterministic:\n%q\n%q", a, b)
+	}
+}
+
+func TestCompactInstructionUnknownCategoryRefused(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	code, out, stderr := run("compact-instruction", in, "--categories-file", cats, "--categories", "9")
+	if code != cli.ExitRefused {
+		t.Fatalf("exit %d, want %d (stderr %q)", code, cli.ExitRefused, stderr)
+	}
+	if out != "" {
+		t.Fatalf("stdout should be empty on refusal, got %q", out)
+	}
+	if !strings.Contains(stderr, "no category") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestCompactInstructionMissingSelectionIsUsageError(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	code, _, stderr := run("compact-instruction", in, "--categories-file", cats)
+	if code != cli.ExitUsage || !strings.Contains(stderr, "--categories") {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+}
+
+func TestCompactInstructionStdinClosed(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+
+	code, _, errOut := run("compact-instruction", in, "--categories-file", cats, "--categories", "1")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+}
+
 func TestPruneHonorsEditedCategoriesFile(t *testing.T) {
 	in := copyFixture(t, opencodeFixture)
 	cats := categorizeTo(t, in, ocCategorizeResponse)
