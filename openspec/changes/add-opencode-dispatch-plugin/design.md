@@ -135,3 +135,25 @@ modified, so there is no destructive failure mode.
 - The exact field names in the context hook's payload and of the live message
   id: pinned against a real dispatch by the functional test.
 - Which cheap model to default the categorizer to (OpenCode Go vs Copilot).
+
+## Implementation findings (2026-10-04)
+
+Verified against OpenCode 2.0.19; see `docs/opencode-plugin-spike.md` for the
+full record.
+
+- **The dispatch hook works.** `session.hook("context")` fires, `event.messages`
+  is mutable, and a dropped message is genuinely absent from what the model
+  receives (proved live: the model answered "unknown" to a token it was never
+  shown). The plugin loads only as a single flat file under
+  `.opencode/plugins/` and only when the project has an `opencode.json`.
+- **Blocked: driving the in-session command headlessly (task 4.1).**
+  `opencode run "/ctxed-prune"` sends the text to the model; it does not execute
+  the plugin command, and `opencode command list` does not show it. The v2
+  `session.command({ sessionID, name, text })` client method exists, and
+  `opencode api <operation>` can reach the server, but the command operation is
+  undocumented and my attempts returned no effect. Task 4.1 needs either the
+  exact server operation/route for a command, or a TUI-driven path, before the
+  command half of the functional gate can run.
+- **Everything else in 4.x is drivable** with the hook: the dropped bucket's
+  absence, anti-drift over a later message, the stored session staying
+  unchanged, and id parity (live ids equal export ids, already proved).
