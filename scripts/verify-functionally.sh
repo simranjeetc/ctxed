@@ -216,6 +216,63 @@ oc_api() {
   fi
 }
 
+# oc_status <port> <method> <path> [json-body] — prints only the HTTP status.
+# Used by the guard to tell "route moved" (404) from "command rejected" (4xx/5xx).
+oc_status() {
+  local port="$1" method="$2" path="$3" body="${4:-}"
+  local auth; auth="$(printf '%s:%s' opencode "$(opencode_password)" | base64)"
+  if [[ -n "$body" ]]; then
+    curl -s -o /dev/null -w '%{http_code}' -X "$method" -H "Authorization: Basic $auth" \
+      -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:$port$path"
+  else
+    curl -s -o /dev/null -w '%{http_code}' -X "$method" -H "Authorization: Basic $auth" \
+      "http://127.0.0.1:$port$path"
+  fi
+}
+
+# Guard: the command API this verifier drives is a real, declared surface, so a
+# future OpenCode upgrade that moves it fails with a clear message instead of a
+# confusing timeout. Two facts are checked:
+#   1. the plugin command is discoverable in GET /api/command (registration), and
+#   2. the command route exists (not 404) — the route the plugin never uses at
+#      dispatch time; only this verifier uses it.
+# The core prune uses session.hook("context"), which is independent of this.
+oc_command_guard() {
+  local port="$1"
+  # 1. Registration: the command must appear in the command list. Registration
+  #    happens as the plugin loads, which is asynchronous, so poll briefly.
+  local listed="no" attempt
+  for attempt in $(seq 1 20); do
+    listed="$(oc_api "$port" GET /api/command | python3 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    print(""); sys.exit(0)
+names=[c.get("name") for c in d.get("data",[])]
+print("yes" if "ctxed-prune" in names else "no")' 2>/dev/null)"
+    [[ "$listed" == "yes" ]] && break
+    sleep 0.5
+  done
+  if [[ "$listed" != "yes" ]]; then
+    fail "opencode:command guard (registration)" "ctxed-prune is not in GET /api/command"
+    return 1
+  fi
+
+  # 2. Route liveness: a POST to the command route must not 404. A 404 means the
+  #    route moved; other 4xx/5xx codes are the command's own behavior.
+  local status
+  status="$(oc_status "$port" POST "/api/session/__guard__/command" '{"name":"ctxed-prune","text":""}')"
+  if [[ "$status" == "404" ]]; then
+    fail "opencode:command guard (route)" \
+      "POST /api/session/{id}/command returned 404 — OpenCode moved the command API; update this verifier"
+    return 1
+  fi
+
+  pass "opencode:command guard (registered; route present, http $status)"
+  return 0
+}
+
 # Bundles the plugin into a scratch OpenCode project and starts a server there.
 # Sets OC_PORT. Returns non-zero if the plugin cannot be built.
 start_opencode_with_plugin() {
@@ -310,7 +367,14 @@ opencode_scenario() {
 
   local model="$OPENCODE_MODEL"
   # Verify the configured model is offered before spending time on a session.
-  if ! opencode models 2>/dev/null | grep -qx "$model"; then
+  # `opencode models` can be empty on the first call while the background server
+  # warms up, so retry before declaring the model unavailable.
+  local model_ok=0
+  for _ in $(seq 1 10); do
+    if opencode models 2>/dev/null | grep -qx "$model"; then model_ok=1; break; fi
+    sleep 1
+  done
+  if [[ "$model_ok" -ne 1 ]]; then
     fail "opencode:model" "'$model' is not in \`opencode models\`; set CTXED_TEST_OPENCODE_MODEL to an entitled model"
     return
   fi
@@ -377,6 +441,10 @@ for line in sys.stdin:
     return
   fi
   pass "opencode:plugin server (port $OC_PORT)"
+
+  # Guard the command API before relying on it, so a moved route is a clear
+  # failure, not a mystery.
+  oc_command_guard "$OC_PORT" || { abort_opencode "$dir"; return; }
 
   local marker="BANANA-$$" newmarker="CHERRY-$$"
   local sid
