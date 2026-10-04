@@ -41,6 +41,7 @@ function config(overrides: Partial<PluginConfig> = {}): PluginConfig {
     categorizerCmd: "",
     categorizerModel: "",
     maxCategories: "",
+    debugLog: "",
     timeoutMs: 1000,
     ...overrides,
   }
@@ -125,6 +126,7 @@ test("loadConfig reads configuration from env", () => {
       CTXED_PLUGIN_CATEGORIZER_MODEL: "gpt-4o",
       CTXED_PLUGIN_MAX_CATEGORIES: "4",
       CTXED_PLUGIN_TIMEOUT_MS: "250",
+      CTXED_PLUGIN_DEBUG_LOG: "/tmp/ctxed-debug.log",
     },
   )
   assert.equal(cfg.enabled, true)
@@ -133,6 +135,7 @@ test("loadConfig reads configuration from env", () => {
   assert.equal(cfg.categorizerModel, "gpt-4o")
   assert.equal(cfg.maxCategories, "4")
   assert.equal(cfg.timeoutMs, 250)
+  assert.equal(cfg.debugLog, "/tmp/ctxed-debug.log")
 })
 
 test("loadConfig lets options override env and defaults the binary to PATH", () => {

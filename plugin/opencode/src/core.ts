@@ -31,6 +31,8 @@ export interface PluginConfig {
   /** Maximum number of buckets to ask ctxed for. */
   maxCategories: string
   timeoutMs: number
+  /** When set, the dispatch hook appends its decision to this file (testing). */
+  debugLog: string
 }
 
 export interface RunResult {
@@ -52,6 +54,7 @@ const OPTION_NAMES: Record<keyof Omit<PluginConfig, "enabled">, string> = {
   categorizerModel: "categorizerModel",
   maxCategories: "maxCategories",
   timeoutMs: "timeoutMs",
+  debugLog: "debugLog",
 }
 
 const ENV_NAMES: Record<keyof Omit<PluginConfig, "enabled">, string> = {
@@ -60,6 +63,7 @@ const ENV_NAMES: Record<keyof Omit<PluginConfig, "enabled">, string> = {
   categorizerModel: "CTXED_PLUGIN_CATEGORIZER_MODEL",
   maxCategories: "CTXED_PLUGIN_MAX_CATEGORIES",
   timeoutMs: "CTXED_PLUGIN_TIMEOUT_MS",
+  debugLog: "CTXED_PLUGIN_DEBUG_LOG",
 }
 
 function asString(value: unknown): string {
@@ -88,6 +92,7 @@ export function loadConfig(
   const categorizerCmd = pick("categorizerCmd")
   const categorizerModel = pick("categorizerModel")
   const maxCategories = pick("maxCategories")
+  const debugLog = pick("debugLog")
 
   let timeoutMs = Number.parseInt(pick("timeoutMs"), 10)
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = DEFAULT_TIMEOUT_MS
@@ -99,6 +104,7 @@ export function loadConfig(
     categorizerModel,
     maxCategories,
     timeoutMs,
+    debugLog,
   }
 }
 

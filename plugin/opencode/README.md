@@ -83,6 +83,7 @@ variables.
 | `categorizerModel` | `CTXED_PLUGIN_CATEGORIZER_MODEL`  | Model name, when the categorizer is a model endpoint.            |
 | `maxCategories`    | `CTXED_PLUGIN_MAX_CATEGORIES`     | Maximum number of buckets to ask ctxed for.                      |
 | `timeoutMs`        | `CTXED_PLUGIN_TIMEOUT_MS`         | Hard timeout per ctxed invocation (default: 2000).               |
+| `debugLog`         | `CTXED_PLUGIN_DEBUG_LOG`          | When set, append each dispatch decision (kept/dropped ids) here. |
 
 Plugin options in `opencode.json`:
 

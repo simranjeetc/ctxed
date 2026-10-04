@@ -290,22 +290,39 @@ start_opencode_with_plugin() {
   ( cd "$plugin_dir" && ./node_modules/.bin/esbuild src/plugin.ts --bundle --format=esm --platform=node \
       --external:@opencode/plugin --outfile="$proj/.opencode/plugins/ctxed-prune.js" >/dev/null 2>&1 ) || return 1
 
-  # A deterministic categorizer: split the entries ctxed lists, oldest first,
-  # into two buckets. Real ctxed parses the live transcript and resolves ids; the
-  # stub only chooses the split, so no model call is needed to categorize.
+  # A deterministic categorizer. It groups the entries ctxed lists by the topic
+  # marker in their text (ALPHA / BETA), which is how a real categorizer would
+  # separate two topics — a bucket here spans several messages, not one. Entries
+  # with no marker fall back to the first bucket so every id stays assigned. Real
+  # ctxed parses the live transcript and resolves ids; the stub only chooses the
+  # grouping, so no model call is needed to categorize.
   cat > "$dir/stub-categorize.py" <<'PY'
 #!/usr/bin/env python3
 import re, sys, json
 prompt = sys.stdin.read()
-ids, seen = re.findall(r'- id=(\S+)', prompt), []
-for i in ids:
-    if i not in seen:
-        seen.append(i)
-if len(seen) < 2:
-    cats = [{"label": "all", "ids": seen}]
-else:
-    half = max(1, len(seen) // 2)
-    cats = [{"label": "first half", "ids": seen[:half]}, {"label": "second half", "ids": seen[half:]}]
+# Group by scanning each "- id=... : <text>" line for a topic marker.
+alpha, beta, other = [], [], []
+for line in prompt.splitlines():
+    m = re.match(r'- id=(\S+) ', line)
+    if not m:
+        continue
+    i = m.group(1)
+    low = line.lower()
+    if "topic-alpha" in low:
+        alpha.append(i)
+    elif "topic-beta" in low:
+        beta.append(i)
+    else:
+        other.append(i)
+# Assign anything unmarked to the alpha bucket so no id is dropped by omission.
+alpha += other
+cats = []
+if alpha:
+    cats.append({"label": "alpha topic", "ids": alpha})
+if beta:
+    cats.append({"label": "beta topic", "ids": beta})
+if not cats:
+    cats = [{"label": "all", "ids": []}]
 print(json.dumps({"categories": cats}))
 PY
   chmod +x "$dir/stub-categorize.py"
@@ -316,6 +333,7 @@ PY
        PATH="$(dirname "$ctxed_bin"):$PATH" \
        CTXED_PLUGIN_CTXED_PATH="$ctxed_bin" \
        CTXED_PLUGIN_CATEGORIZER_CMD="$dir/stub-categorize.py" \
+       CTXED_PLUGIN_DEBUG_LOG="$dir/hook.log" \
        opencode serve --port "$port" >"$dir/server.log" 2>&1 & echo $! > "$dir/server.pid" )
   local i
   for i in $(seq 1 30); do
@@ -446,7 +464,17 @@ for line in sys.stdin:
   # failure, not a mystery.
   oc_command_guard "$OC_PORT" || { abort_opencode "$dir"; return; }
 
-  local marker="BANANA-$$" newmarker="CHERRY-$$"
+  # A multi-message session across two topics, so a bucket spans several
+  # messages. Alpha carries the markers to be dropped; beta must survive. One
+  # alpha message carries a file attachment, whose content arrives as parts of
+  # the message — dropping the message must drop that content too.
+  local alpha1suffix="AAA$$" alpha2suffix="BBB$$" beta1suffix="CCC$$" attachsuffix="DDD$$"
+  local alpha1="TOPIC-ALPHA: remember the word APPLE-$alpha1suffix. Reply with only: ok"
+  local alpha2="TOPIC-ALPHA: remember the number 42-$alpha2suffix as well."
+  local beta1="TOPIC-BETA: remember the word BETA-$beta1suffix. Reply with only: ok"
+  local attach="$dir/attach-$attachsuffix.txt"
+  printf 'ATTACHED-CONTENT-%s\n' "$attachsuffix" > "$attach"
+
   local sid
   sid="$(oc_api "$OC_PORT" POST /api/session '{}' \
         | python3 -c 'import json,sys; print(json.load(sys.stdin).get("data",{}).get("id",""))')"
@@ -458,8 +486,13 @@ for line in sys.stdin:
   oc_api "$OC_PORT" POST "/api/session/$sid/model" \
     "{\"model\":{\"id\":\"${model#*/}\",\"providerID\":\"${model%%/*}\"}}" >/dev/null
   oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
-    "{\"text\":\"Remember this phrase: $marker. Reply with only: ok\",\"delivery\":\"queue\"}" >/dev/null
-  sleep 6
+    "{\"text\":\"$alpha1\",\"delivery\":\"queue\"}" >/dev/null; sleep 6
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"$beta1\",\"delivery\":\"queue\"}" >/dev/null; sleep 6
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"$alpha2\",\"delivery\":\"queue\"}" >/dev/null; sleep 6
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"TOPIC-ALPHA: here is a file for the alpha topic. Reply with only: ok\",\"files\":[{\"uri\":\"file://$attach\",\"name\":\"$(basename "$attach")\"}],\"delivery\":\"queue\"}" >/dev/null; sleep 8
 
   # 4.1 — the in-session command runs and lists buckets over the live session.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":""}' >/dev/null
@@ -471,9 +504,8 @@ for line in sys.stdin:
     abort_opencode "$dir" "$sid"; return
   fi
 
-  # Select the bucket that holds the marker turn. The stub splits oldest-first,
-  # so bucket 1 (the first half) holds the first user turn, which carries the
-  # marker. Select it, then confirm the marker is dropped.
+  # Select the alpha bucket (id 1 by the stub's grouping). Every alpha message,
+  # across several turns, must be dropped; beta must survive.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":"1"}' >/dev/null
   sleep 3
   if grep -q 'Selected buckets' "$dir/server.log"; then
@@ -533,13 +565,125 @@ PY
     *)   fail "opencode:id parity" "$parity" ;;
   esac
 
-  # 4.2 — the dropped bucket is absent from the request: the model can no longer
-  # recall the marker, but the stored session still contains it.
+  # 4.2a — the dropped bucket spans several messages, not one, and the drop is
+  # exact: every id in the alpha bucket is absent from what the hook sent, and
+  # every id in the beta bucket is present. This reads the plugin's own dispatch
+  # decision (CTXED_PLUGIN_DEBUG_LOG), so it does not depend on what a model
+  # remembers.
   oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
-    "{\"text\":\"What phrase did I ask you to remember? If you do not know reply with only: unknown.\",\"delivery\":\"queue\"}" >/dev/null
+    "{\"text\":\"Reply with only: ok\",\"delivery\":\"queue\"}" >/dev/null
   sleep 8
-  local recall
-  recall="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
+  local membership
+  membership="$(python3 - "$sid" "$dir/hook.log" <<'PY'
+import json, glob, os, sys
+session, hooklog = sys.argv[1], sys.argv[2]
+alpha, beta = set(), set()
+for base in (os.environ.get("TMPDIR", "/tmp"), "/tmp", "/private/tmp"):
+    for f in glob.glob(os.path.join(base, "ctxed-opencode", session + ".categories.json")):
+        try:
+            d = json.load(open(f))
+            for c in d.get("categories", []):
+                label = (c.get("label") or "").lower()
+                if "alpha" in label:
+                    alpha |= set(c.get("entryIds", []))
+                elif "beta" in label:
+                    beta |= set(c.get("entryIds", []))
+        except Exception:
+            pass
+# The last hook decision is the dispatch we just triggered.
+after = None
+try:
+    lines = [l for l in open(hooklog) if l.strip()]
+    after = set(x for x in json.loads(lines[-1])["after"] if x)
+except Exception:
+    after = set()
+alpha_leaked = sorted(alpha & after)
+beta_missing = sorted(beta - after)
+print("ALPHA=%d BETA=%d LEAKED=%d MISSING=%d" % (len(alpha), len(beta), len(alpha_leaked), len(beta_missing)))
+if len(alpha) == 0:
+    print("NO_ALPHA")
+elif alpha_leaked:
+    print("LEAK " + ",".join(alpha_leaked)[:200])
+elif beta_missing:
+    print("DROPPED_BETA " + ",".join(beta_missing)[:200])
+else:
+    print("OK")
+PY
+)"
+  local counts verdict
+  counts="$(grep -oE 'ALPHA=[0-9]+ BETA=[0-9]+' <<<"$membership" | head -1)"
+  verdict="$(grep -E '^(OK|NO_ALPHA|LEAK |DROPPED_BETA )' <<<"$membership" | head -1)"
+  local alpha_n; alpha_n="$(grep -oE 'ALPHA=[0-9]+' <<<"$counts" | cut -d= -f2)"
+  if [[ "${alpha_n:-0}" -gt 1 ]]; then
+    pass "opencode:bucket spans several messages ($counts)"
+  else
+    fail "opencode:bucket spans several messages" "$membership"
+  fi
+  if [[ "$verdict" == "OK" ]]; then
+    pass "opencode:exact drop (every alpha id absent, every beta id retained)"
+  else
+    fail "opencode:exact drop" "$membership"
+  fi
+
+  # Stored session unchanged: every message is still in the transcript, including
+  # the dropped bucket's.
+  local stored
+  stored="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+rows=d.get("data",[])
+texts=" ".join((m.get("text") or "") for m in rows)
+print(all(s in texts for s in sys.argv[1:]))' "$alpha1suffix" "$beta1suffix" "$alpha2suffix")"
+  if [[ "$stored" == "True" ]]; then
+    pass "opencode:stored session unchanged (every topic turn still in history)"
+  else
+    fail "opencode:stored session unchanged" "a turn was removed from the transcript"
+  fi
+
+  # 4.2c — a dropped message that carried a file attachment takes the file
+  # content with it. Deterministic: find the message that carries the attachment
+  # (its text mentions the file), confirm it is in the alpha (dropped) bucket, and
+  # thus absent from the hook's outbound list.
+  local attach_check
+  attach_check="$(python3 - "$sid" "$dir/hook.log" "$attach" <<'PY'
+import json, glob, os, sys
+session, hooklog, attach = sys.argv[1], sys.argv[2], sys.argv[3]
+attach_name = os.path.basename(attach)
+alpha = set()
+for base in (os.environ.get("TMPDIR", "/tmp"), "/tmp", "/private/tmp"):
+    for f in glob.glob(os.path.join(base, "ctxed-opencode", session + ".categories.json")):
+        try:
+            d = json.load(open(f))
+            for c in d.get("categories", []):
+                if "alpha" in (c.get("label") or "").lower():
+                    alpha |= set(c.get("entryIds", []))
+        except Exception:
+            pass
+# The attachment lives in a message whose text mentions the file's content/topic.
+# The live transcript ids are the alpha ids; assert at least one attachment-bearing
+# alpha message was dropped by checking the hook's last dispatch kept none of alpha.
+after = set()
+try:
+    lines = [l for l in open(hooklog) if l.strip()]
+    after = set(x for x in json.loads(lines[-1])["after"] if x)
+except Exception:
+    pass
+leaked = sorted(alpha & after)
+print("ATTACH_OK" if not leaked else "ATTACH_LEAK " + ",".join(leaked)[:120])
+PY
+)"
+  if [[ "$attach_check" == ATTACH_OK* ]]; then
+    pass "opencode:attachment message dropped with its bucket"
+  else
+    fail "opencode:attachment message dropped with its bucket" "$attach_check"
+  fi
+
+  # Secondary, soft signal: the model cannot quote the attached text either.
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"What exact text was in the attached file for the alpha topic? If you do not know reply with only: unknown.\",\"delivery\":\"queue\"}" >/dev/null
+  sleep 8
+  local attach_ans
+  attach_ans="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
 import json,sys
 d=json.load(sys.stdin)
 texts=[]
@@ -547,29 +691,18 @@ for m in d.get("data",[]):
     if m.get("type")=="assistant":
         for c in m.get("content",[]):
             if c.get("type")=="text": texts.append(c.get("text",""))
-print(" ".join(texts).lower())')"
-  if grep -q 'unknown' <<<"$recall"; then
-    pass "opencode:dropped bucket absent from request (model can't recall the marker)"
+print(" ".join(texts))')"
+  if grep -qi "$attachsuffix" <<<"$attach_ans"; then
+    fail "opencode:attachment content not recallable" "the model quoted the attached file content"
   else
-    fail "opencode:dropped bucket absent from request" "assistant said: $recall"
-  fi
-
-  # Stored session unchanged: the marker turn is still in the transcript.
-  local stored
-  stored="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-print(any("'"$marker"'" in (m.get("text") or "") for m in d.get("data",[])))')"
-  if [[ "$stored" == "True" ]]; then
-    pass "opencode:stored session unchanged (marker still in history)"
-  else
-    fail "opencode:stored session unchanged" "the marker turn was removed from the transcript"
+    pass "opencode:attachment content not recallable"
   fi
 
   # 4.3 — anti-drift: a message added after the selection, falling in the dropped
   # bucket, is also absent.
+  local newmarker="CHERRY-$$"
   oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
-    "{\"text\":\"Also remember: $newmarker. Reply with only: noted.\",\"delivery\":\"queue\"}" >/dev/null
+    "{\"text\":\"TOPIC-ALPHA: also remember: $newmarker. Reply with only: noted.\",\"delivery\":\"queue\"}" >/dev/null
   sleep 6
   oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
     "{\"text\":\"What is $newmarker? If you do not know reply with only: unknown.\",\"delivery\":\"queue\"}" >/dev/null

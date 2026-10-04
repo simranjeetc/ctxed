@@ -163,3 +163,22 @@ full record.
   the dropped bucket is absent from the request (the model cannot recall its
   content), the stored session is unchanged, a message added after the selection
   in a dropped bucket is also absent, and live ids equal the session's ids.
+- **A bucket spanning many messages is asserted, not assumed.** The scenario
+  builds a two-topic session where one topic spans several turns (7-9 entries),
+  and checks the plugin's own dispatch decision: every id in the dropped bucket
+  is absent from what it sent, every id in the kept bucket is present. It reads
+  `CTXED_PLUGIN_DEBUG_LOG`, so the assertion is deterministic and does not depend
+  on a model's memory.
+- **Attachment content travels with its message.** A file attachment arrives as
+  parts of a message (inlined text, and a tool-call/result pair), so dropping the
+  message drops the content; the scenario asserts the attachment-bearing message
+  is dropped and its text is not recallable.
+- **Known limit: an id-less tool result can survive an id-based drop.** The live
+  message list can contain a `tool` message with a **null id** whose matching
+  `tool-call` sits in an earlier, id-bearing message. The plugin filters by id,
+  so it cannot name the result and leaves it. Observed live: dropping the
+  tool-call message left the null-id result message in the request, which
+  OpenCode still accepted. ctxed's orphan resolution would catch this on a
+  document, but the live hook filters ids, so the repair does not run. This is
+  acceptable for now (the request succeeds, no dangling-result error observed)
+  but is the first thing to revisit if a provider ever rejects it.

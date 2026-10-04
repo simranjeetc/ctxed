@@ -11,7 +11,7 @@
 // exec/present/substitute is translating the two live message encodings into
 // ctxed's document shape (see transcript.ts).
 
-import { mkdirSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -109,12 +109,33 @@ export const CtxedPrunePlugin = Plugin.define({
         run,
         report,
       })
+      // An opt-in decision log for verification: when set, record what the hook
+      // decided so a test can assert on the drop deterministically instead of
+      // asking a model what it remembers. Off unless the env var is set.
+      if (config.debugLog !== "") {
+        debugDecide(config.debugLog, messages, result)
+      }
       if (result.dropped > 0) {
         event.messages = result.messages as typeof event.messages
       }
     })
   },
 })
+
+/**
+ * Appends one JSON line describing what the hook decided: the ids it saw, the
+ * ids it kept, and the ids it dropped. Opt-in (set CTXED_PLUGIN_DEBUG_LOG), used
+ * by the functional verifier so a drop can be asserted deterministically rather
+ * than by asking a model what it remembers.
+ */
+function debugDecide(logPath: string, messages: readonly LiveMessage[], result: { messages: LiveMessage[] }): void {
+  try {
+    const ids = (list: readonly LiveMessage[]) => list.map((m) => (typeof m.id === "string" ? m.id : null))
+    appendFileSync(logPath, JSON.stringify({ before: ids(messages), after: ids(result.messages) }) + "\n")
+  } catch {
+    // A debug log must never break a turn.
+  }
+}
 
 /**
  * Reads the command arguments. OpenCode hands them as a `Prompt` object with a
