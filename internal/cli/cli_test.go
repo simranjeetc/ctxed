@@ -698,8 +698,7 @@ func runStdin(stdin string, args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errBuf.String()
 }
 
-func TestCategorizeFromStdinMatchesFile(t *testing.T) {
-	// The same session and response must produce the same categories whether the
+func TestCategorizeFromStdinMatchesFile(t *testing.T) { // The same session and response must produce the same categories whether the
 	// session arrives as a path or on stdin.
 	data, err := os.ReadFile(opencodeFixture)
 	if err != nil {
@@ -755,5 +754,35 @@ func TestPruneFromStdinIDsOnly(t *testing.T) {
 	_, fromFile, _ := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
 	if strings.TrimSpace(stdout) != strings.TrimSpace(fromFile) {
 		t.Fatalf("stdin and file drop sets differ:\n%s\n%s", stdout, fromFile)
+	}
+}
+
+func TestCategorizeOutDashPrintsJSONToStdout(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	// `--out -` must print the categories document on stdout, not write a file
+	// named "-", so a plugin can read the buckets without a temp file.
+	code, stdout, stderr := run("categorize", in,
+		"--categorizer-cmd", "cat "+ocCategorizeResponse, "--out", "-")
+	if code != cli.ExitOK {
+		t.Fatalf("categorize --out - failed: exit %d, stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, "wrote -") {
+		t.Fatalf("--out - wrote a file instead of printing: %q", stdout)
+	}
+	var parsed struct {
+		Categories []struct {
+			Label string `json:"label"`
+			ID    int    `json:"id"`
+		} `json:"categories"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &parsed); err != nil {
+		t.Fatalf("stdout is not the categories JSON: %v\n%s", err, stdout)
+	}
+	if len(parsed.Categories) != 2 || parsed.Categories[0].ID != 1 {
+		t.Fatalf("unexpected categories: %+v", parsed.Categories)
+	}
+	// No file named "-" may be created in the working directory.
+	if _, err := os.Stat("-"); err == nil {
+		t.Fatal("--out - created a literal '-' file")
 	}
 }

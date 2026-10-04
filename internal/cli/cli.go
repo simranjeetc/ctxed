@@ -323,6 +323,17 @@ func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if outPath == "" {
 		outPath = categoriesOut(name)
 	}
+	// `--out -` prints the categories file to stdout instead of writing it, so a
+	// plugin can categorize a live transcript without a temp file (the stdin
+	// counterpart to `categorize -`/`prune -`).
+	if outPath == "-" {
+		data, err := categorize.Marshal(f)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		fmt.Fprintf(stdout, "%s", data)
+		return ExitOK
+	}
 	if err := categorize.WriteFile(outPath, f); err != nil {
 		return fail(stderr, err)
 	}
