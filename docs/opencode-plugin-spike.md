@@ -100,14 +100,42 @@ The same run showed the live message list contains entries with a **`null` id**
 (assistant/tool parts). A serializer must tolerate those and an id filter must
 leave them alone.
 
-## Commands do not run under `opencode run`
+## Commands do not run under `opencode run`; they do run over the server API
 
 `opencode run "/ctxed-prune"` sends the text to the model; it does **not**
-execute the plugin command. Commands are a TUI/API surface. The programmatic
-path is `session.command({ sessionID, name, text })` over the server API
-(`opencode api …`, or the `session.command` operation), not a CLI `run`
-argument. The functional verifier must drive the command through the API, or
-assert the command path with the plugin's own functions and drive the hook live.
+execute the plugin command. Commands are a server/TUI surface. The programmatic
+path, confirmed working:
+
+- `GET /api/command` lists registered commands. A command registered by
+  `ctx.command.transform(editor => editor.add({name, description, execute}))`
+  appears there by name (**after** the plugin loads; the list is empty while the
+  plugin is still being discovered).
+- `POST /api/session/{sessionID}/command` with body `{name, text}` invokes it.
+  `name` is the command name; `text` is the argument string.
+- `execute(input)` receives `input.prompt` as an object with a **`text` field**
+  (`PromptInput.Prompt`), not a bare string — read `input.prompt.text`.
+
+The server requires auth even from localhost: HTTP Basic with username
+`opencode` and the `OPENCODE_PASSWORD` value. Example:
+
+```sh
+auth=$(printf 'opencode:%s' "$OPENCODE_PASSWORD" | base64)
+curl -H "Authorization: Basic $auth" \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"ctxed-prune","text":"1"}' \
+  "http://127.0.0.1:$PORT/api/session/$SID/command"
+```
+
+`GET /api/session/{sessionID}/context` returns the session messages; a prompt is
+queued with `POST /api/session/{sessionID}/prompt` body
+`{text, delivery}` where `delivery` is `steer` or `queue` (not `terminal`).
+
+## The categorizer output must be the JSON, not a table
+
+`ctxed categorize --out <path>` writes the categories file and prints a human
+table. A plugin needs the JSON without managing a temp path, so
+`ctxed categorize --out -` prints the categories document to stdout (the output
+counterpart to the `-` stdin input).
 
 ## Impact on the change
 

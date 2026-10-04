@@ -51,14 +51,16 @@
 
 ## 4. Functional verification (the gate)
 
-- [ ] 4.1 `scripts/verify-functionally.sh --opencode` creates a real session via
+- [x] 4.1 `scripts/verify-functionally.sh --opencode` creates a real session via
       `opencode run`, runs the in-session categorize+select, dispatches, and
       observes the outgoing request
-- [ ] 4.2 Assert the selected bucket is absent from the request and the stored
+- [x] 4.2 Assert the selected bucket is absent from the request and the stored
       session is unchanged
-- [ ] 4.3 Assert a message added after selection in a dropped bucket is also
+- [x] 4.3 Assert a message added after selection in a dropped bucket is also
       absent (the anti-drift requirement)
-- [ ] 4.4 Assert live message ids equal the ids ctxed categorizes over (the id
-      parity risk); fail loudly if not, and switch to content/tool-id matching
-- [ ] 4.5 Verify `openspec validate add-opencode-dispatch-plugin --strict` passes
+- [x] 4.4 Assert live message ids equal the ids ctxed categorizes over (the id
+      parity risk); fail loudly if not, and switch to content/tool-id matching.
+      Resolved without the fallback: the spike proved live ids equal export ids,
+      and the functional gate now asserts it (`opencode:id parity (OK n)`)
+- [x] 4.5 Verify `openspec validate add-opencode-dispatch-plugin --strict` passes
       and the delta specs match the implemented behavior

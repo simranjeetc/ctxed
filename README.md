@@ -47,6 +47,14 @@ $ opencode session export <id> | ctxed categorize - --model M --out cats.json
 $ opencode session export <id> | ctxed prune - --categories-file cats.json --categories 1 --ids-only
 ```
 
+A `--out` of `-` is the output counterpart: `categorize` prints the categories
+document to stdout instead of writing a file, so a caller never manages a temp
+path.
+
+```sh
+$ opencode session export <id> | ctxed categorize - --model M --out -
+```
+
 ### inspect
 
 ```sh

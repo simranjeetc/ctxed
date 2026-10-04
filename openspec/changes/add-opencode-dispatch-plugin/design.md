@@ -146,14 +146,20 @@ full record.
   receives (proved live: the model answered "unknown" to a token it was never
   shown). The plugin loads only as a single flat file under
   `.opencode/plugins/` and only when the project has an `opencode.json`.
-- **Blocked: driving the in-session command headlessly (task 4.1).**
-  `opencode run "/ctxed-prune"` sends the text to the model; it does not execute
-  the plugin command, and `opencode command list` does not show it. The v2
-  `session.command({ sessionID, name, text })` client method exists, and
-  `opencode api <operation>` can reach the server, but the command operation is
-  undocumented and my attempts returned no effect. Task 4.1 needs either the
-  exact server operation/route for a command, or a TUI-driven path, before the
-  command half of the functional gate can run.
-- **Everything else in 4.x is drivable** with the hook: the dropped bucket's
-  absence, anti-drift over a later message, the stored session staying
-  unchanged, and id parity (live ids equal export ids, already proved).
+- **The in-session command runs and can be driven headlessly.** The v2 server
+  exposes `POST /api/session/{sessionID}/command` (opId `session.command`) with
+  body `{name, text}`; the command registers via `ctx.command.transform` and
+  shows in `GET /api/command`. The server authenticates with HTTP Basic using
+  `OPENCODE_PASSWORD`, so the functional gate starts a real server
+  (`opencode serve`), creates a session, sets a model, prompts, and invokes
+  `/ctxed-prune` through that route. (`opencode run "/ctxed-prune"` sends the
+  text to the model instead — commands are a server/TUI surface.)
+- **The command needs the categories JSON on stdout.** `ctxed categorize --out -`
+  now prints the categories document instead of writing a file named `-`. This is
+  the output counterpart to the stdin input added in task 1.3, and is what the
+  plugin reads to present buckets.
+- **Everything in 4.x is asserted live** by `scripts/verify-functionally.sh
+  --opencode`: the command categorizes the live session, a selection is recorded,
+  the dropped bucket is absent from the request (the model cannot recall its
+  content), the stored session is unchanged, a message added after the selection
+  in a dropped bucket is also absent, and live ids equal the session's ids.

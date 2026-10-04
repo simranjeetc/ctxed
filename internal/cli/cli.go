@@ -79,6 +79,7 @@ Usage:
 
   <session> may be a file path, or "-" to read a transcript on stdin.
   On stdin, the categories file's session field is "-".
+  For categorize, --out "-" prints the categories document to stdout.
 
 Commands:
   inspect     print each entry: index, role, kind, tokens, first-line preview

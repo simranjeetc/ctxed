@@ -35,6 +35,8 @@ KEEP="${CTXED_TEST_KEEP:-0}"
 FAILURES=0
 PASSES=0
 SCRATCH=()
+SCRATCH_SESSIONS=()  # OpenCode session ids created by a scenario, deleted on exit
+OC_PORT=""
 CHECKS=()          # "status<TAB>name<TAB>detail" for the JSON report
 REPORT=""          # optional report path (--report json writes here)
 MODEL_USED=""
@@ -70,6 +72,13 @@ else
 fi
 
 cleanup() {
+  # Delete any OpenCode session a scenario created, so a real store is never
+  # left with scratch sessions.
+  if [[ ${#SCRATCH_SESSIONS[@]} -gt 0 && -n "$OC_PORT" ]]; then
+    for s in "${SCRATCH_SESSIONS[@]}"; do
+      oc_api "$OC_PORT" DELETE "/api/session/$s" >/dev/null 2>&1 || true
+    done
+  fi
   if [[ "$KEEP" == "1" && $FAILURES -gt 0 ]]; then
     echo "kept scratch: ${SCRATCH[*]:- (none)}"
     [[ -n "$REPORT" ]] && write_report
@@ -184,6 +193,104 @@ build_ctxed() {
 # OpenCode functional scenario
 # ---------------------------------------------------------------------------
 
+# A free TCP port, so parallel runs do not collide.
+free_port() {
+  python3 -c 'import socket
+s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
+}
+
+# The OpenCode v2 server needs a password; the CLI and SDK both read
+# OPENCODE_PASSWORD. This machine sets it; default to the same value so a fresh
+# shell still works.
+opencode_password() { printf '%s' "${OPENCODE_PASSWORD:-opencode}"; }
+
+# oc_api <port> <method> <path> [json-body] — prints the response body.
+oc_api() {
+  local port="$1" method="$2" path="$3" body="${4:-}"
+  local auth; auth="$(printf '%s:%s' opencode "$(opencode_password)" | base64)"
+  if [[ -n "$body" ]]; then
+    curl -s -X "$method" -H "Authorization: Basic $auth" \
+      -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:$port$path"
+  else
+    curl -s -X "$method" -H "Authorization: Basic $auth" "http://127.0.0.1:$port$path"
+  fi
+}
+
+# Bundles the plugin into a scratch OpenCode project and starts a server there.
+# Sets OC_PORT. Returns non-zero if the plugin cannot be built.
+start_opencode_with_plugin() {
+  local src="$1" ctxed_bin="$2" dir="$3"
+  local plugin_dir="$src/plugin/opencode"
+  [[ -d "$plugin_dir" ]] || return 1
+
+  local proj="$dir/proj"
+  mkdir -p "$proj/.opencode/plugins"
+  printf '{}\n' > "$proj/opencode.json"
+  printf '{"name":"ctxed-fn","private":true,"type":"module","dependencies":{"@opencode/plugin":"2.0.22"}}\n' \
+    > "$proj/.opencode/package.json"
+  ( cd "$proj/.opencode" && npm install --no-audit --no-fund --silent >/dev/null 2>&1 ) || return 1
+  ( cd "$plugin_dir" && [[ -x node_modules/.bin/esbuild ]] || npm install --no-audit --no-fund --silent >/dev/null 2>&1 ) || return 1
+  ( cd "$plugin_dir" && ./node_modules/.bin/esbuild src/plugin.ts --bundle --format=esm --platform=node \
+      --external:@opencode/plugin --outfile="$proj/.opencode/plugins/ctxed-prune.js" >/dev/null 2>&1 ) || return 1
+
+  # A deterministic categorizer: split the entries ctxed lists, oldest first,
+  # into two buckets. Real ctxed parses the live transcript and resolves ids; the
+  # stub only chooses the split, so no model call is needed to categorize.
+  cat > "$dir/stub-categorize.py" <<'PY'
+#!/usr/bin/env python3
+import re, sys, json
+prompt = sys.stdin.read()
+ids, seen = re.findall(r'- id=(\S+)', prompt), []
+for i in ids:
+    if i not in seen:
+        seen.append(i)
+if len(seen) < 2:
+    cats = [{"label": "all", "ids": seen}]
+else:
+    half = max(1, len(seen) // 2)
+    cats = [{"label": "first half", "ids": seen[:half]}, {"label": "second half", "ids": seen[half:]}]
+print(json.dumps({"categories": cats}))
+PY
+  chmod +x "$dir/stub-categorize.py"
+
+  local port; port="$(free_port)"
+  ( cd "$proj" \
+    && OPENCODE_PASSWORD="$(opencode_password)" \
+       PATH="$(dirname "$ctxed_bin"):$PATH" \
+       CTXED_PLUGIN_CTXED_PATH="$ctxed_bin" \
+       CTXED_PLUGIN_CATEGORIZER_CMD="$dir/stub-categorize.py" \
+       opencode serve --port "$port" >"$dir/server.log" 2>&1 & echo $! > "$dir/server.pid" )
+  local i
+  for i in $(seq 1 30); do
+    if curl -s -o /dev/null "http://127.0.0.1:$port/api/plugin" \
+         -H "Authorization: Basic $(printf '%s:%s' opencode "$(opencode_password)" | base64)"; then break; fi
+    sleep 0.5
+  done
+  OC_PORT="$port"
+}
+
+stop_opencode_server() {
+  local dir="$1"
+  [[ -f "$dir/server.pid" ]] || return 0
+  local pid; pid="$(cat "$dir/server.pid" 2>/dev/null)"
+  [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
+  # The server may spawn a child service; kill by port as a fallback.
+  [[ -n "${OC_PORT:-}" ]] && {
+    local p; p="$(lsof -tiTCP:"$OC_PORT" -sTCP:LISTEN 2>/dev/null)"
+    [[ -n "$p" ]] && kill $p 2>/dev/null
+  }
+  return 0
+}
+
+# Deletes a scratch session while the server is still running, then stops the
+# server. Used on every early exit so no scratch session is left behind.
+abort_opencode() {
+  local dir="$1" sid="${2:-}"
+  [[ -n "$sid" ]] && oc_api "$OC_PORT" DELETE "/api/session/$sid" >/dev/null 2>&1
+  SCRATCH_SESSIONS=()
+  stop_opencode_server "$dir"
+}
+
 opencode_scenario() {
   need opencode "OpenCode CLI, authenticated"
   # --ids-only lives on the OpenCode branch. If this checkout does not have it,
@@ -263,12 +370,160 @@ for line in sys.stdin:
     *) fail "opencode:prune --ids-only" "$ids" ;;
   esac
 
-  # 5. PENDING (tasks 4.1-4.4): run the in-session command and the dispatch hook,
-  #    observe the outgoing request, assert the dropped bucket is absent, that a
-  #    message added after selection is absent, and that ids match on both
-  #    surfaces. The plugin does not implement the in-session command yet, so
-  #    this scenario stops at the ctxed half and reports the gap.
-  echo "PENDING opencode:in-session dispatch assertions (tasks 4.1-4.4) — plugin command not built yet"
+  # 5. Drive the in-session command and the dispatch hook through a real server,
+  #    and assert the drop is real (tasks 4.1-4.4).
+  if ! start_opencode_with_plugin "$src" "$CTXED" "$dir"; then
+    skip_check "opencode:in-session plugin flow" "could not build/start the plugin server"
+    return
+  fi
+  pass "opencode:plugin server (port $OC_PORT)"
+
+  local marker="BANANA-$$" newmarker="CHERRY-$$"
+  local sid
+  sid="$(oc_api "$OC_PORT" POST /api/session '{}' \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("data",{}).get("id",""))')"
+  if [[ -z "$sid" ]]; then
+    fail "opencode:in-session create session"; abort_opencode "$dir"; return
+  fi
+  SCRATCH_SESSIONS+=("$sid")
+
+  oc_api "$OC_PORT" POST "/api/session/$sid/model" \
+    "{\"model\":{\"id\":\"${model#*/}\",\"providerID\":\"${model%%/*}\"}}" >/dev/null
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"Remember this phrase: $marker. Reply with only: ok\",\"delivery\":\"queue\"}" >/dev/null
+  sleep 6
+
+  # 4.1 — the in-session command runs and lists buckets over the live session.
+  oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":""}' >/dev/null
+  sleep 3
+  if grep -q 'Categories:' "$dir/server.log"; then
+    pass "opencode:in-session command (categorized the live session)"
+  else
+    fail "opencode:in-session command" "$(tail -3 "$dir/server.log" 2>/dev/null)"
+    abort_opencode "$dir" "$sid"; return
+  fi
+
+  # Select the bucket that holds the marker turn. The stub splits oldest-first,
+  # so bucket 1 (the first half) holds the first user turn, which carries the
+  # marker. Select it, then confirm the marker is dropped.
+  oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":"1"}' >/dev/null
+  sleep 3
+  if grep -q 'Selected buckets' "$dir/server.log"; then
+    pass "opencode:selection recorded"
+  else
+    fail "opencode:selection recorded" "$(tail -3 "$dir/server.log" 2>/dev/null)"
+    abort_opencode "$dir" "$sid"; return
+  fi
+
+  # 4.4 — id parity: the ids ctxed categorized over the live transcript are the
+  # session message ids. Checked after a selection, because that is when the
+  # plugin writes the categories file. Export the session and assert every id
+  # ctxed saw is present there.
+  local export_live="$dir/live-export.json"
+  oc_api "$OC_PORT" GET "/api/experimental/session/$sid/export" > "$export_live" 2>/dev/null || true
+  if [[ ! -s "$export_live" ]]; then
+    opencode session export "$sid" > "$export_live" 2>/dev/null || true
+  fi
+  local parity
+  parity="$(python3 - "$export_live" "$sid" <<'PY'
+import json, sys, glob, os
+session = sys.argv[2]
+# Only the categories file for this session (the plugin names it by session id).
+files = []
+for base in (os.environ.get("TMPDIR", "/tmp"), "/tmp", "/private/tmp"):
+    files += glob.glob(os.path.join(base, "ctxed-opencode", session + ".categories.json"))
+cat_ids = set()
+for f in files:
+    try:
+        d = json.load(open(f))
+        for c in d.get("categories", []):
+            cat_ids.update(c.get("entryIds", []))
+    except Exception:
+        pass
+export_ids = set()
+try:
+    doc = json.load(open(sys.argv[1]))
+    raw = doc.get("data", doc)
+    if isinstance(raw, dict):
+        for m in raw.get("messages", []):
+            if isinstance(m, dict) and m.get("id"):
+                export_ids.add(m["id"])
+except Exception:
+    pass
+if not cat_ids:
+    print("NO_CATEGORIZED_IDS")
+elif not export_ids:
+    print("NO_EXPORT_IDS")
+elif not cat_ids <= export_ids:
+    print("MISMATCH " + ",".join(sorted(cat_ids - export_ids))[:200])
+else:
+    print("OK %d" % len(cat_ids))
+PY
+)"
+  case "$parity" in
+    OK*) pass "opencode:id parity ($parity)" ;;
+    *)   fail "opencode:id parity" "$parity" ;;
+  esac
+
+  # 4.2 — the dropped bucket is absent from the request: the model can no longer
+  # recall the marker, but the stored session still contains it.
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"What phrase did I ask you to remember? If you do not know reply with only: unknown.\",\"delivery\":\"queue\"}" >/dev/null
+  sleep 8
+  local recall
+  recall="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+texts=[]
+for m in d.get("data",[]):
+    if m.get("type")=="assistant":
+        for c in m.get("content",[]):
+            if c.get("type")=="text": texts.append(c.get("text",""))
+print(" ".join(texts).lower())')"
+  if grep -q 'unknown' <<<"$recall"; then
+    pass "opencode:dropped bucket absent from request (model can't recall the marker)"
+  else
+    fail "opencode:dropped bucket absent from request" "assistant said: $recall"
+  fi
+
+  # Stored session unchanged: the marker turn is still in the transcript.
+  local stored
+  stored="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print(any("'"$marker"'" in (m.get("text") or "") for m in d.get("data",[])))')"
+  if [[ "$stored" == "True" ]]; then
+    pass "opencode:stored session unchanged (marker still in history)"
+  else
+    fail "opencode:stored session unchanged" "the marker turn was removed from the transcript"
+  fi
+
+  # 4.3 — anti-drift: a message added after the selection, falling in the dropped
+  # bucket, is also absent.
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"Also remember: $newmarker. Reply with only: noted.\",\"delivery\":\"queue\"}" >/dev/null
+  sleep 6
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    "{\"text\":\"What is $newmarker? If you do not know reply with only: unknown.\",\"delivery\":\"queue\"}" >/dev/null
+  sleep 8
+  local drift
+  drift="$(oc_api "$OC_PORT" GET "/api/session/$sid/context" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+texts=[]
+for m in d.get("data",[]):
+    if m.get("type")=="assistant":
+        for c in m.get("content",[]):
+            if c.get("type")=="text": texts.append(c.get("text",""))
+print(" ".join(texts).lower())')"
+  if grep -q 'unknown' <<<"$drift"; then
+    pass "opencode:anti-drift (a post-selection message in a dropped bucket is also absent)"
+  else
+    fail "opencode:anti-drift" "assistant said: $drift"
+  fi
+
+  # Delete the scratch session while the server is still up.
+  abort_opencode "$dir" "$sid"
 }
 
 # ---------------------------------------------------------------------------

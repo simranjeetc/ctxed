@@ -58,18 +58,20 @@ selection.
 
 The plugin categorizes the **live** messages rather than a stale export, so the
 buckets describe the session the user is actually in. It pipes the transcript to
-ctxed on stdin:
+ctxed on stdin and asks for the categories document on stdout:
 
 ```sh
-<live transcript> | ctxed categorize - --model M --out cats.json
+<live transcript> | ctxed categorize - --model M --out -
 ```
 
-- **stdout** — the same human-readable table as a file-based categorize.
-- **`--out`** — the editable categories file, with `session` set to `-`.
+- **stdout** — the categories document (JSON), with `session` set to `-`.
 - **exit code** — 0 on success; non-zero on failure.
 
 The user reads the bucket labels, selects buckets to drop, and the plugin then
 resolves that selection to ids with `--ids-only` above. Ids stay internal.
+
+`--out <path>` writes the categories file and prints a human table instead;
+`--out -` is the pathless form a plugin uses.
 
 ## Invariants the plugin can rely on
 

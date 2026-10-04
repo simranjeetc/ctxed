@@ -71,7 +71,7 @@ export const CtxedPrunePlugin = Plugin.define({
             return
           }
 
-          const selected = parseSelectionInput(String(prompt ?? ""))
+          const selected = parseSelectionInput(commandText(prompt))
           if (selected.length === 0) {
             console.log(formatBuckets(result.buckets))
             console.log(`Select buckets with /${COMMAND_NAME} <ids> (e.g. /${COMMAND_NAME} 1,3).`)
@@ -115,6 +115,19 @@ export const CtxedPrunePlugin = Plugin.define({
     })
   },
 })
+
+/**
+ * Reads the command arguments. OpenCode hands them as a `Prompt` object with a
+ * `text` field; a bare string is accepted too, so the helper is total.
+ */
+function commandText(prompt: unknown): string {
+  if (typeof prompt === "string") return prompt
+  if (prompt !== null && typeof prompt === "object") {
+    const text = (prompt as { text?: unknown }).text
+    if (typeof text === "string") return text
+  }
+  return ""
+}
 
 /**
  * Reads a session's messages through the plugin API. Returns an empty list on
