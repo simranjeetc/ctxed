@@ -33,6 +33,12 @@ const version = "0.1.0"
 
 // Run dispatches a command and returns its exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
+	return RunWithStdin(args, os.Stdin, stdout, stderr)
+}
+
+// RunWithStdin is Run with an explicit stdin, so a transcript can be piped in
+// (`ctxed categorize - …`) and tests can supply one without touching the OS.
+func RunWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		usage(stderr)
 		return ExitUsage
@@ -43,9 +49,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "drop":
 		return runDrop(args[1:], stdout, stderr)
 	case "categorize":
-		return runCategorize(args[1:], stdout, stderr)
+		return runCategorize(args[1:], stdin, stdout, stderr)
 	case "prune":
-		return runPrune(args[1:], stdout, stderr)
+		return runPrune(args[1:], stdin, stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return ExitOK
@@ -70,6 +76,9 @@ Usage:
                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
   ctxed prune   <session> (--categories-file F --categories 1,3 | --ids id1,id2)
                 [--ids-only]
+
+  <session> may be a file path, or "-" to read a transcript on stdin.
+  On stdin, the categories file's session field is "-".
 
 Commands:
   inspect     print each entry: index, role, kind, tokens, first-line preview
@@ -235,7 +244,19 @@ func splitArgs(args []string, valueFlags map[string]bool) (flags, pos []string) 
 	return flags, pos
 }
 
-func runCategorize(args []string, stdout, stderr io.Writer) int {
+// readSession returns the session bytes from a path, or from stdin when the
+// path is "-" or empty. The returned name is used for default output paths and
+// the categories file's session field.
+func readSession(in string, stdin io.Reader) (data []byte, name string, err error) {
+	if in == "" || in == "-" {
+		data, err = io.ReadAll(stdin)
+		return data, "-", err
+	}
+	data, err = os.ReadFile(in)
+	return data, in, err
+}
+
+func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("categorize", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	modelName := fs.String("model", "", "model name for the call and its tokenizer")
@@ -251,12 +272,15 @@ func runCategorize(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(flags); err != nil {
 		return parseErrExit(err, stderr)
 	}
-	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "ctxed categorize: expected exactly one session file")
+	if len(rest) > 1 {
+		fmt.Fprintln(stderr, "ctxed categorize: expected at most one session file")
 		return ExitUsage
 	}
-	in := rest[0]
-	data, err := os.ReadFile(in)
+	in := ""
+	if len(rest) == 1 {
+		in = rest[0]
+	}
+	data, name, err := readSession(in, stdin)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -293,11 +317,11 @@ func runCategorize(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	f.Session = in
+	f.Session = name
 
 	outPath := *out
 	if outPath == "" {
-		outPath = categoriesOut(in)
+		outPath = categoriesOut(name)
 	}
 	if err := categorize.WriteFile(outPath, f); err != nil {
 		return fail(stderr, err)
@@ -309,7 +333,7 @@ func runCategorize(args []string, stdout, stderr io.Writer) int {
 	return ExitOK
 }
 
-func runPrune(args []string, stdout, stderr io.Writer) int {
+func runPrune(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	catsFile := fs.String("categories-file", "", "categories file")
@@ -327,12 +351,15 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 			idsSet = true
 		}
 	}
-	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "ctxed prune: expected exactly one session file")
+	if len(rest) > 1 {
+		fmt.Fprintln(stderr, "ctxed prune: expected at most one session file")
 		return ExitUsage
 	}
-	in := rest[0]
-	data, err := os.ReadFile(in)
+	in := ""
+	if len(rest) == 1 {
+		in = rest[0]
+	}
+	data, _, err := readSession(in, stdin)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -468,14 +495,14 @@ func write(doc *session.Document) ([]byte, error) {
 }
 
 type stats struct {
-	Source         string        `json:"source"`
-	Input          string        `json:"input"`
-	Output         string        `json:"output"`
-	EntriesBefore  int           `json:"entriesBefore"`
-	EntriesAfter   int           `json:"entriesAfter"`
-	TokensBefore   int           `json:"tokensBefore"`
-	TokensAfter    int           `json:"tokensAfter"`
-	RemovedIndices []int         `json:"removedIndices"`
+	Source         string                `json:"source"`
+	Input          string                `json:"input"`
+	Output         string                `json:"output"`
+	EntriesBefore  int                   `json:"entriesBefore"`
+	EntriesAfter   int                   `json:"entriesAfter"`
+	TokensBefore   int                   `json:"tokensBefore"`
+	TokensAfter    int                   `json:"tokensAfter"`
+	RemovedIndices []int                 `json:"removedIndices"`
 	Tokenizer      inspect.TokenizerInfo `json:"tokenizer"`
 }
 

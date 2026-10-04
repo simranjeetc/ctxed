@@ -8,10 +8,10 @@
       each yield the expected ids
 - [x] 1.2 Verify the empty case and determinism: no selection yields an empty
       array, and two runs are identical
-- [ ] 1.3 Accept a transcript on stdin for `categorize` (and `prune`), so the
+- [x] 1.3 Accept a transcript on stdin for `categorize` (and `prune`), so the
       plugin can categorize the live messages without exporting the session;
       verify with a test that stdin and a file path produce the same result
-- [ ] 1.4 Document `--ids-only` and the stdin transcript path in the README and
+- [x] 1.4 Document `--ids-only` and the stdin transcript path in the README and
       `docs/plugin-contract.md`; verify the documented invocations match the
       implemented flags
 

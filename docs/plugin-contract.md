@@ -7,9 +7,10 @@ categorization, selection, id resolution, and validity handling live in ctxed.
 
 ## What the plugin provides
 
-- **The session source.** A path to the session document ctxed can read: a
-  Claude Code `.jsonl` transcript, or an OpenCode `session export` JSON. ctxed
-  never opens a harness database.
+- **The session source.** The session document ctxed can read: a Claude Code
+  `.jsonl` transcript, or an OpenCode `session export` JSON. It may be a path, or
+  `-` to read it on stdin so a plugin never has to write a temp file. ctxed never
+  opens a harness database.
 - **A prune selection.** Either:
   - a categories file plus the category ids to drop (`--categories-file F
     --categories 1,3`), or
@@ -52,6 +53,23 @@ ctxed prune session.json --categories-file session.categories.json --categories 
 The plugin removes the messages whose id is in `droppedIds`, preserving order
 and every other message. Output is deterministic for a given session and
 selection.
+
+### Categorize from the live transcript
+
+The plugin categorizes the **live** messages rather than a stale export, so the
+buckets describe the session the user is actually in. It pipes the transcript to
+ctxed on stdin:
+
+```sh
+<live transcript> | ctxed categorize - --model M --out cats.json
+```
+
+- **stdout** — the same human-readable table as a file-based categorize.
+- **`--out`** — the editable categories file, with `session` set to `-`.
+- **exit code** — 0 on success; non-zero on failure.
+
+The user reads the bucket labels, selects buckets to drop, and the plugin then
+resolves that selection to ids with `--ids-only` above. Ids stay internal.
 
 ## Invariants the plugin can rely on
 

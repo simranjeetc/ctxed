@@ -38,7 +38,14 @@ ctxed prune      <session> (--categories-file F --categories 1,3 | --ids id1,id2
                  [--ids-only]
 ```
 
-The session path may appear before or after the flags.
+The session path may appear before or after the flags. A `<session>` of `-`
+reads the transcript on stdin, so a plugin can categorize or prune the live
+messages without exporting the session first:
+
+```sh
+$ opencode session export <id> | ctxed categorize - --model M --out cats.json
+$ opencode session export <id> | ctxed prune - --categories-file cats.json --categories 1 --ids-only
+```
 
 ### inspect
 

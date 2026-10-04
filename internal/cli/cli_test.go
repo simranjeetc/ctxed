@@ -690,3 +690,70 @@ func assertNoEditedFile(t *testing.T, in string) {
 		t.Fatalf("expected no edited file, found %v", matches)
 	}
 }
+
+// runStdin is run() with an explicit stdin, for the piped-transcript path.
+func runStdin(stdin string, args ...string) (code int, stdout, stderr string) {
+	var out, errBuf bytes.Buffer
+	code = cli.RunWithStdin(args, strings.NewReader(stdin), &out, &errBuf)
+	return code, out.String(), errBuf.String()
+}
+
+func TestCategorizeFromStdinMatchesFile(t *testing.T) {
+	// The same session and response must produce the same categories whether the
+	// session arrives as a path or on stdin.
+	data, err := os.ReadFile(opencodeFixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	fileOut := filepath.Join(t.TempDir(), "from-file.json")
+	code, _, stderr := run("categorize", opencodeFixture,
+		"--categorizer-cmd", "cat "+ocCategorizeResponse, "--out", fileOut)
+	if code != cli.ExitOK {
+		t.Fatalf("file categorize failed: %d %q", code, stderr)
+	}
+	stdinOut := filepath.Join(t.TempDir(), "from-stdin.json")
+	code, _, stderr = runStdin(string(data), "categorize", "-",
+		"--categorizer-cmd", "cat "+ocCategorizeResponse, "--out", stdinOut)
+	if code != cli.ExitOK {
+		t.Fatalf("stdin categorize failed: %d %q", code, stderr)
+	}
+	a, _ := os.ReadFile(fileOut)
+	b, _ := os.ReadFile(stdinOut)
+	// The session field records the source name, so compare the categories body.
+	var fa, fb map[string]any
+	if err := json.Unmarshal(a, &fa); err != nil {
+		t.Fatalf("parse file out: %v", err)
+	}
+	if err := json.Unmarshal(b, &fb); err != nil {
+		t.Fatalf("parse stdin out: %v", err)
+	}
+	delete(fa, "session")
+	delete(fb, "session")
+	if !reflect.DeepEqual(fa, fb) {
+		t.Fatalf("categories differ between file and stdin:\n%v\n%v", fa, fb)
+	}
+}
+
+func TestPruneFromStdinIDsOnly(t *testing.T) {
+	data, err := os.ReadFile(opencodeFixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	// Build a proper categories file by categorizing the fixture (same as other
+	// prune tests), then prune the same content arriving on stdin.
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	code, stdout, stderr := runStdin(string(data), "prune", "-",
+		"--categories-file", cats, "--categories", "2", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("prune from stdin failed: %d %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "droppedIds") {
+		t.Fatalf("stdout = %q, want a droppedIds object", stdout)
+	}
+	// The stdin path and the file path must resolve to the same drop set.
+	_, fromFile, _ := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
+	if strings.TrimSpace(stdout) != strings.TrimSpace(fromFile) {
+		t.Fatalf("stdin and file drop sets differ:\n%s\n%s", stdout, fromFile)
+	}
+}
