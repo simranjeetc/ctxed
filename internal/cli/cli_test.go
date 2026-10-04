@@ -565,6 +565,124 @@ func TestPruneHonorsEditedCategoriesFile(t *testing.T) {
 	}
 }
 
+func TestPruneIDsOnlyByCategory(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+
+	code, stdout, stderr := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	var r struct {
+		DroppedIDs []string `json:"droppedIds"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("stdout is not a JSON object: %v\n%s", err, stdout)
+	}
+	want := []string{"msg_101f9625c001NLzjIh2rzpuhNj"} // category 2
+	if !reflect.DeepEqual(r.DroppedIDs, want) {
+		t.Fatalf("droppedIds = %v, want %v", r.DroppedIDs, want)
+	}
+	if strings.Contains(stdout, `"messages"`) {
+		t.Fatal("ids-only emitted a transcript instead of an id set")
+	}
+}
+
+func TestPruneIDsOnlyByExplicitID(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	const id = "msg_101f96175001KNBHKRACZI25DD"
+	code, stdout, stderr := run("prune", in, "--ids", id, "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	var r struct {
+		DroppedIDs []string `json:"droppedIds"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if !reflect.DeepEqual(r.DroppedIDs, []string{id}) {
+		t.Fatalf("droppedIds = %v, want [%s]", r.DroppedIDs, id)
+	}
+}
+
+func TestPruneIDsOnlyReflectsOrphanResolution(t *testing.T) {
+	in := copyFixture(t, claudeFixture)
+	cats := categorizeTo(t, in, claudeCategorizeResponse)
+
+	// Category 1 holds the tool_use; its result is in category 2, so the
+	// resolved set must include the dependent result's id too.
+	code, stdout, stderr := run("prune", in, "--categories-file", cats, "--categories", "1", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "adjustment:") {
+		t.Fatalf("expected an adjustment on stderr, got %q", stderr)
+	}
+	var r struct {
+		DroppedIDs []string `json:"droppedIds"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	want := []string{
+		"61e80e18-146b-46e3-bd72-c6bc5e568a42",
+		"46cb1fcf-1731-4bd3-b5e5-04a35e187404",
+		"c3990fee-117c-4879-90e0-158f2245a45e",
+	}
+	if !reflect.DeepEqual(r.DroppedIDs, want) {
+		t.Fatalf("droppedIds = %v, want %v", r.DroppedIDs, want)
+	}
+}
+
+func TestPruneIDsOnlyNothingDropped(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+
+	// Empty the selected category so the selection resolves to no ids.
+	var f map[string]any
+	data, _ := os.ReadFile(cats)
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	list := f["categories"].([]any)
+	list[1].(map[string]any)["entryIds"] = []any{}
+	edited, _ := json.Marshal(f)
+	if err := os.WriteFile(cats, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[]}` {
+		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[]}`)
+	}
+}
+
+func TestPruneIDsOnlyEmptySelection(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	// An explicit but empty --ids is a selection that resolves to no ids.
+	code, stdout, stderr := run("prune", in, "--ids", "", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != `{"droppedIds":[]}` {
+		t.Fatalf("stdout = %q, want %q", got, `{"droppedIds":[]}`)
+	}
+}
+
+func TestPruneIDsOnlyDeterministic(t *testing.T) {
+	in := copyFixture(t, opencodeFixture)
+	cats := categorizeTo(t, in, ocCategorizeResponse)
+	_, a, _ := run("prune", in, "--categories-file", cats, "--categories", "1", "--ids-only")
+	_, b, _ := run("prune", in, "--categories-file", cats, "--categories", "1", "--ids-only")
+	if a != b {
+		t.Fatalf("ids-only output is not deterministic:\n%s\n%s", a, b)
+	}
+}
+
 func assertNoEditedFile(t *testing.T, in string) {
 	t.Helper()
 	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(in), "*.edited.*"))

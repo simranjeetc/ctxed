@@ -69,12 +69,16 @@ Usage:
   ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
   ctxed prune   <session> (--categories-file F --categories 1,3 | --ids id1,id2)
+                [--ids-only]
 
 Commands:
   inspect     print each entry: index, role, kind, tokens, first-line preview
   drop        write a copy of the session with the given entries removed
   categorize  group entries into high-level categories and write an editable file
   prune       emit the transcript with selected entries excluded (no write)
+
+Flags:
+  prune --ids-only   print {"droppedIds":[…]} (the resolved drop set) instead of a transcript
 
 Exit codes: 0 ok, 1 error, 2 usage, 3 refused (invalid or unsafe selection)
 `)
@@ -311,10 +315,17 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 	catsFile := fs.String("categories-file", "", "categories file")
 	cats := fs.String("categories", "", "comma-separated category ids to drop")
 	ids := fs.String("ids", "", "comma-separated stable entry ids to drop")
+	idsOnly := fs.Bool("ids-only", false, "emit the resolved dropped entry ids as JSON instead of a transcript")
 
 	flags, rest := splitArgs(args, valueFlagsPrune)
 	if err := fs.Parse(flags); err != nil {
 		return parseErrExit(err, stderr)
+	}
+	idsSet := false
+	for _, f := range flags {
+		if name := strings.TrimLeft(f, "-"); name == "ids" || strings.HasPrefix(name, "ids=") {
+			idsSet = true
+		}
 	}
 	if len(rest) != 1 {
 		fmt.Fprintln(stderr, "ctxed prune: expected exactly one session file")
@@ -356,7 +367,7 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "ctxed prune: %v\n", err)
 			return ExitRefused
 		}
-	case *ids != "":
+	case *ids != "" || idsSet:
 		pruneIDs = splitList(*ids)
 	default:
 		fmt.Fprintln(stderr, "ctxed prune: provide --categories-file with --categories, or --ids")
@@ -372,6 +383,9 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 	for _, a := range adjustments {
 		fmt.Fprintln(stderr, "adjustment: "+a)
 	}
+	if *idsOnly {
+		return writeDroppedIDs(stdout, stderr, doc, final)
+	}
 	doc.Drop(final)
 	edited, err := write(doc)
 	if err != nil {
@@ -380,6 +394,30 @@ func runPrune(args []string, stdout, stderr io.Writer) int {
 	if _, err := stdout.Write(edited); err != nil {
 		return fail(stderr, err)
 	}
+	return ExitOK
+}
+
+// writeDroppedIDs prints the resolved drop set as a JSON object on stdout, so a
+// dispatch plugin can filter live messages by id. ids are emitted in session
+// order, which makes the output deterministic.
+func writeDroppedIDs(stdout, stderr io.Writer, doc *session.Document, indices []int) int {
+	drop := make(map[int]bool, len(indices))
+	for _, i := range indices {
+		drop[i] = true
+	}
+	dropped := make([]string, 0, len(indices))
+	for _, e := range doc.Entries {
+		if drop[e.Index] {
+			dropped = append(dropped, e.ID)
+		}
+	}
+	b, err := json.Marshal(struct {
+		DroppedIDs []string `json:"droppedIds"`
+	}{DroppedIDs: dropped})
+	if err != nil {
+		return fail(stderr, err)
+	}
+	fmt.Fprintf(stdout, "%s\n", b)
 	return ExitOK
 }
 
