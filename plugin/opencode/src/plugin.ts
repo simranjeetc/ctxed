@@ -87,6 +87,11 @@ export const CtxedPrunePlugin = Plugin.define({
             return
           }
 
+          // Say what is happening before the slow part. Categorizing calls a
+          // model and can take many seconds; a command that shows nothing until
+          // it finishes reads as "nothing happened".
+          await say(sessionID, `Categorizing this session… (a model call; a long session can take ~30s)`)
+
           const result = await categorizeLive({
             transcript: JSON.stringify(serializeContextMessages(messages)),
             config,
