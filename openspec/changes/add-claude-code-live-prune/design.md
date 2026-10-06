@@ -72,9 +72,15 @@ kept list — optionally summarising through `next`.
 - **Why:** `SessionCompactInput.messages` is writable, the hook can supply the
   final list, and `$.session.compact()` triggers the same compaction `/compact`
   makes, between turns (decisions §2.3). This is exact and live.
-- **Status:** early-access API. Not built here; the tasks record it. The open
-  questions in decisions §6 (does it install live; main conversation vs
-  subagents) must be confirmed against a real session first.
+- **Status (revised 2026-10-06):** the mod API is GA (Claude Code 2.1.287+);
+  `docs/claude-code-mods-spike.md` proves drop-with-handles offline. Live install
+  and main-conversation behavior (decisions §6) are still to confirm in a real
+  session (tasks 2.2).
+- **Bucket ↔ message mapping (decided 2026-10-06):** live `SessionMessage`s carry
+  no transcript uuid, so the mod categorizes the live messages themselves
+  through ctxed (`--from claude-mod`), making bucket entry ids equal to
+  `handle`s. This mirrors the OpenCode plugin, which categorizes live messages
+  by their live ids. Precondition: handles are stable across turns (task 2.3).
 
 ### D4: Rejected mechanisms (do not revisit)
 

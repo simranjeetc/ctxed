@@ -61,6 +61,11 @@ selected buckets are dropped exactly — not merely biased away by a summary.
 - **WHEN** the mod's compact hook runs with a selection
 - **THEN** every message in a selected bucket is absent from the list the hook returns
 
+#### Scenario: Buckets are computed over the live messages
+
+- **WHEN** the mod categorizes the session
+- **THEN** it categorizes the live message list through ctxed, and each bucket entry id is a live message `handle`, not a transcript uuid
+
 #### Scenario: Kept messages round-trip unchanged
 
 - **WHEN** a message is not in a selected bucket
