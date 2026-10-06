@@ -1,88 +1,91 @@
 # ctxed
 
-Inspect and edit an agent's context window as a file: see every entry you are
-about to send, and remove the ones you don't want.
+See what an agent session's context is made of: which topics it holds, how many
+tokens each takes, which are done, and what is still pending. Works the same in
+Claude Code and OpenCode. Read-only: ctxed never changes a session.
 
-`ctxed` reads a session document, shows each entry with its token cost, and
-writes a copy with chosen entries removed. The input is never modified.
+```
+$ ctxed overview
+Session ses_ef89… · live context: 14 messages · ~86.4k tokens (estimate)
 
-## Positioning: not another DCP
+ #   Topic                                         Msgs   Tokens  Share  Status
+ 1   Direct API publish instead of GitHub Action      4    11.2k    13%  in progress
+ 2   Digest URL publish-chain investigation           5     4.6k     5%  done
+ 3   Pending steps recap                              4     2.3k     3%  done
+     Compaction summary + kept tail                   1    68.2k    79%  —
 
-[OpenCode DCP](https://github.com/OpenCode-DCP/opencode-dynamic-context-pruning)
-prunes automatically, inside the process, and hides the result — it swaps
-summaries and placeholders into the outbound transcript and never touches stored
-history. ctxed inverts the control model: it acts on a real file, shows you the
-entries, and lets a human or a harness decide. It is the transparent,
-steerable counterpart to an automatic pruner, not a faster one.
+Pending: digest_url still unset; Move email (send_digest) ahead of dossiers
 
-ctxed does not reduce tokens on its own. It removes only the entries you tell it
-to — by index, or by high-level category. Compression (replacing a range with a
-summary) and automatic pruning remain out of scope and are tracked in
-[`docs/future-enhancements.md`](docs/future-enhancements.md).
+Not counted: 690 messages from before the last compaction.
+```
 
-## Two live flows, two different guarantees
+You decide what to do with it: carry on, compact, or start a new session.
 
-Pruning a **running** session is offered on two harnesses, and they do **not**
-promise the same thing. Read the difference before relying on either:
+## Inside a session: the `ctxed-overview` skill
 
-| | OpenCode — live bucket prune | Claude Code — compaction steering |
-| --- | --- | --- |
-| Entry point | `/ctxed-prune` inside the session | `ctxed-prune-context` **skill**, or `ctxed compact-instruction` in a terminal |
-| Stays in session? | Yes — run `/ctxed-prune`, then answer with the bucket numbers | Yes with the skill (the agent runs the commands); the terminal flow leaves the session |
-| What it does | Drops the named messages **by id** | Asks Claude's `/compact` to drop the named buckets |
-| Guarantee | **Exact** — the named messages are gone | **Best-effort** — the summary is steered, not forced |
+One skill, [`skills/ctxed-overview/`](skills/ctxed-overview/), for both
+harnesses. Ask "what's in my context?" (or `/ctxed-overview`); the agent runs
+`ctxed overview` and shows the table as printed.
 
-In Claude Code the recommended path is the **`ctxed-prune-context` skill**
-([`.claude/skills/ctxed-prune-context/`](.claude/skills/ctxed-prune-context/)):
-say *"drop the adapter topic"*, the agent finds the transcript, runs the
-commands, and gives you the `/compact` sentence to paste. It needs
-`categorize`'s model to be configured (see
-[Model configuration](#model-configuration)) and it inherits the best-effort
-ceiling — it automates the plumbing, not the guarantee.
+```
+ Claude Code                    OpenCode
+ skill: ctxed-overview          skill: ctxed-overview  (same file)
+        │                              │
+        └──────── ctxed overview ──────┘
+                       │
+   find session   CLAUDE_CODE_SESSION_ID → ~/.claude/projects/*/<id>.jsonl
+                  OPENCODE_SESSION_ID    → opencode session export <id>
+   live context   only what follows the last compaction, plus the compaction
+   topics         one cheap model call: claude -p (Haiku) / opencode run
+   print          table, or --json
+```
 
-If you need a dropped topic to be *provably* absent, use the OpenCode flow. The
-Claude Code flow biases a summary toward your intent; it does not guarantee a
-specific entry is removed. Both leave the **stored** session untouched.
+There is no plugin and nothing in the request path.
 
-**Why not just restart?** A restart throws away the whole thread. This drops one
-topic and keeps the rest — the thread, the decisions, and the working context
-survive. If that isn't worth it to you, a restart is simpler and you should use it.
-
-## Build
+### Install
 
 ```sh
-go build -o ctxed ./cmd/ctxed
+go install ./cmd/ctxed                                     # ~/go/bin/ctxed
+ln -s "$PWD/skills/ctxed-overview" ~/.claude/skills/        # Claude Code
+mkdir -p ~/.config/opencode/skills/ctxed-overview \
+  && cp skills/ctxed-overview/SKILL.md ~/.config/opencode/skills/ctxed-overview/   # OpenCode
 ```
+
+Restart OpenCode's server afterwards; it loads skills at start.
 
 ## Usage
 
-```sh
-ctxed inspect    <session> [--json] [--model M] [--tokenizer ENC]
-ctxed drop       <session> --indices 3,7,9 [--out FILE] [--json] [--force] \
-                 [--model M] [--tokenizer ENC]
-ctxed categorize <session> [--model M] [--base-url URL] [--api-key K] \
+```
+ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--max-categories N]
+ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
+ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                  [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
-ctxed prune      <session> (--categories-file F --categories 1,3 | --ids id1,id2)
-                 [--ids-only]
-ctxed compact-instruction <session> --categories-file F --categories 1,3
 ```
 
-The session path may appear before or after the flags. A `<session>` of `-`
-reads the transcript on stdin, so a plugin can categorize or prune the live
-messages without exporting the session first:
+`<session>` is a Claude Code transcript (`.jsonl`) or an OpenCode export
+(`opencode session export <id> > s.json`).
 
-```sh
-$ opencode session export <id> | ctxed categorize - --model M --out cats.json
-$ opencode session export <id> | ctxed prune - --categories-file cats.json --categories 1 --ids-only
-```
+### overview
 
-A `--out` of `-` is the output counterpart: `categorize` prints the categories
-document to stdout instead of writing a file, so a caller never manages a temp
-path.
-
-```sh
-$ opencode session export <id> | ctxed categorize - --model M --out -
-```
+- **Session**: a file argument, else `--session` (a Claude Code UUID or an
+  OpenCode `ses_…` id), else the session the command runs in. If both harness
+  variables are set it refuses and asks for `--session`.
+- **Live context only**: entries after the last compaction. The compaction is
+  its own row: Claude Code's summary, or OpenCode's summary plus the recent
+  messages it keeps verbatim (often the largest row).
+- **Every live message is in exactly one row**, and the totals equal
+  `ctxed inspect`. The categorizer sees a sample of a long session; an entry it
+  did not see joins the topic of the nearest entry before it.
+- **Status and pending** are the model's reading of the session: `done`,
+  `in progress`, or `?` when it gave none.
+- **If the model call fails**, the sizes are still printed, as one
+  "Whole session" row, and the error goes to stderr.
+- **Categorizer**: `--categorizer-cmd` or `CTXED_CATEGORIZER_CMD` (prompt on
+  stdin, answer on stdout), else the harness's own CLI — `claude -p --model
+  haiku` for Claude Code, `opencode run --model opencode-go/deepseek-v4-flash`
+  for OpenCode. `CTXED_CATEGORIZER_MODEL` overrides the model.
+  `CTXED_CLAUDE_BIN` / `CTXED_OPENCODE_BIN` point at the CLIs if they are not on
+  PATH.
 
 ### inspect
 
@@ -95,210 +98,49 @@ IDX  ROLE       KIND       TOKENS  PREVIEW
 TOTAL 3 entries · 696 tokens  (tokenizer: approximation · approximate)
 ```
 
-`--json` emits the same fields as an object for a harness to consume.
+Lists the live context entry by entry. `--json` emits the same fields as an
+object.
 
-### drop
+### categorize
 
-```sh
-$ ctxed drop session.json --indices 3,7,9
-wrote session.edited.json
-entries 62 → 59 · tokens 48,213 → 47,006 (-1,207)
-```
-
-Writes `<name>.edited.<ext>` by default; `--out` overrides. The input file is
-left byte-for-byte unchanged. `--json` prints a stats object instead.
-
-### categorize — what is this session about?
-
-A model groups the entries into 2–5 high-level categories (five by default) and
-ctxed writes an editable file plus a high-level table:
-
-```sh
-$ ctxed categorize session.json --model gpt-4o-mini
-CAT  LABEL                        ENTRIES  TOKENS
-1    Claude Code adapter work     38       96,120
-2    Codex adapter investigation  12       28,400
-wrote session.categories.json
-```
-
-Edit `session.categories.json` if the labels or membership are wrong — rename a
-category, move an entry, or pull one out. `categorize` never drops anything.
-
-### prune — apply a selection, non-destructively
-
-> **Guarantee: exact.** The selected entries are removed by id; the named
-> messages are gone from the outbound transcript.
-
-`prune` emits the transcript with the selected entries excluded, on stdout. It
-does not touch the session and does not create a new one:
-
-```sh
-$ ctxed prune session.json --categories-file session.categories.json --categories 1
-# pruned transcript on stdout; the session file is never written
-```
-
-A harness plugin substitutes that transcript at dispatch (see
-[`docs/plugin-contract.md`](docs/plugin-contract.md)). If a selection would
-orphan a tool result, ctxed drops the dependent entry too and reports it on
-stderr as an `adjustment:` line.
-
-### compact-instruction — prune a live Claude Code session
-
-> **Guarantee: best-effort.** This steers Claude's `/compact`; it does **not**
-> force a specific entry to be removed the way the OpenCode flow does. Use it to
-> bias a summary toward your intent, not to prove a topic is gone.
-
-**Prefer the skill.** In a Claude Code session, the `ctxed-prune-context` skill
-([`.claude/skills/ctxed-prune-context/`](.claude/skills/ctxed-prune-context/))
-wraps the steps below: say *"drop the adapter topic"* and the agent finds the
-transcript, runs `categorize`, shows you the buckets, and hands you the
-`/compact` sentence. Use `compact-instruction` directly when you are driving by
-hand from a terminal.
-
-Claude Code cannot rewrite the outbound request from a hook, so its live prune
-uses compaction instead. `compact-instruction` turns a category selection into a
-single sentence naming the buckets to keep and drop, which you paste after
-`/compact ` in the running session:
-
-```sh
-$ ctxed compact-instruction ~/.claude/projects/<project>/<session>.jsonl \
-    --categories-file session.categories.json --categories 2
-
-When you compact this session, keep the context about Context editor design discussion, and drop the context about Adapter implementation notes.
-```
-
-Then, in the same session:
-
-```text
-/compact When you compact this session, keep the context about … and drop the context about …
-```
-
-The instruction is deterministic, offline, and calls no model — it only reads
-the categories file. Claude Code's own compaction rewrites history in place, so
-the prune lands live, in the same session, with no relaunch and no file edit.
-The retained detail is model-mediated: the instruction biases the summary, it
-does not guarantee a specific entry survives. A future change adds a Claude Code
-mod that drops the selected buckets exactly; see
-`openspec/changes/add-claude-code-live-prune`.
-
-### ids-only — the drop set for a live plugin
-
-`--ids-only` prints just the resolved set of **dropped** entry ids — after orphan
-resolution — as JSON, instead of a transcript. A plugin that holds live message
-objects (OpenCode's dispatch hook) filters by id without re-serialising the
-transcript on every dispatch:
-
-```sh
-$ ctxed prune session.json --categories-file session.categories.json --categories 1 --ids-only
-{"droppedIds":["msg_101f9625c001NLzjIh2rzpuhNj"],"droppedToolCallIds":["call_00_…"]}
-```
-
-`droppedToolCallIds` names the tool-call ids the dropped entries issued or
-answered, so a plugin can drop a tool result that lives in a message with no id
-of its own. The stored session is still never written. See
-[`plugin/opencode/`](plugin/opencode/) for the OpenCode plugin that consumes it.
-
-### Model configuration
-
-`categorize` reaches a model two ways:
-
-```sh
-ctxed categorize session.json --model gpt-4o \
-    --base-url https://api.openai.com/v1 --api-key "$OPENAI_API_KEY"
-ctxed categorize session.json --categorizer-cmd 'llm -m gpt-4o'  # prompt on stdin, response on stdout
-```
-
-For this machine there is a ready wrapper that needs **no API key** — it asks an
-OpenCode Go model the machine is already entitled to:
-
-```sh
-ctxed categorize session.json \
-    --categorizer-cmd "$PWD/scripts/ctxed-categorizer-opencode.sh"
-# override the model with CTXED_CATEGORIZER_MODEL (default opencode-go/deepseek-v4-flash)
-```
-
-Environment fallbacks: `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `CTXED_MODEL`. The
-command override takes precedence and makes the whole path offline and
-deterministic, so tests need no network — and it is the path for a provider
-reachable only through a CLI.
-
-### Choosing a harness
-
-**Claude Code** — point ctxed at the transcript directly:
-
-```sh
-ctxed inspect ~/.claude/projects/<project>/<session>.jsonl
-```
-
-Claude Code's hooks cannot rewrite the outbound messages, so it cannot be
-pruned at dispatch. Instead, categorize the transcript, pick the buckets to
-drop, and turn that selection into a `/compact` instruction applied to the
-running session:
-
-```sh
-ctxed categorize          ~/.claude/projects/<project>/<session>.jsonl --model gpt-4o
-ctxed compact-instruction ~/.claude/projects/<project>/<session>.jsonl \
-    --categories-file session.categories.json --categories 2
-# then paste the printed sentence after `/compact ` in the session
-```
-
-Claude Code compacts by appending, not rewriting: the transcript keeps the old
-conversation, then a compaction boundary and a summary. ctxed reads only the
-**live context**: the last summary, any messages that compaction kept, and
-everything after it. So `inspect` totals, buckets and instructions cover only
-what the model still carries. Compacted entries cannot be dropped, and every
-line of the file is still written back.
-
-**OpenCode** — sessions live in SQLite, so export first:
-
-```sh
-opencode session export <session-id> > session.json
-ctxed inspect session.json
-ctxed drop session.json --indices 3,7,9   # writes session.edited.json
-```
-
-ctxed never opens the database. Note: OpenCode cannot import an edited export
-back into an existing session in place, so this produces a portable artifact.
-Continuing a live session with pruned context is handled non-destructively at
-dispatch (see the `add-category-prune` change). See
-[`docs/adapters.md`](docs/adapters.md).
+Groups the entries into 2–5 categories and writes an editable
+`<name>.categories.json`. Model options: `--categorizer-cmd`, or
+`--base-url/--api-key/--model` (fallbacks `OPENAI_BASE_URL`, `OPENAI_API_KEY`,
+`CTXED_MODEL`).
 
 ## Token counts
 
-Counts come from the tokenizer of the model you name, when a real one is
-available. Otherwise ctxed uses a documented approximation — one token per four
-runes, rounded up — and labels every count `approximate` in the output. For
-example, the 5-rune string `abcde` is counted as 2 tokens.
+Counts are estimates by default: one token per four runes, rounded up, labelled
+`estimate`/`approximate`. Name a model or encoding for a real tokenizer:
 
 ```sh
-ctxed inspect session.json --model gpt-4o            # real BPE encoding
-ctxed inspect session.json --tokenizer cl100k_base   # explicit encoding
+ctxed inspect session.json --model gpt-4o
+ctxed overview --tokenizer cl100k_base
 ```
 
-## Structural safety
+## Pruning is parked
 
-If dropping an entry would orphan a tool result — a result whose tool call is
-gone — ctxed refuses to write and names the offending entries. An explicit
-`--force` writes anyway and reports what it found. The default is always the
-safe one for an artifact fed back into an agent loop.
+Earlier versions dropped topics from a live session (`drop`, `prune`,
+`compact-instruction`, `ctxed opencode`, an OpenCode plugin, and prune skills).
+Compaction in both harnesses could bring dropped content back, so that path is
+parked: the code and its tests stay in the tree, but no command, skill or
+plugin reaches it. See [`parked/`](parked/) and
+`openspec/changes/context-overview`.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | success |
-| 1 | runtime error (missing file, unrecognized format, write failure) |
-| 2 | usage error |
-| 3 | refused (invalid indices, or an edit that orphans tool results) |
-
-Data and stats go to stdout; diagnostics go to stderr. Write commands need no
-terminal, so a harness can call them programmatically.
+| 0 | success (also when only the topic names were unavailable) |
+| 1 | runtime error (missing file or transcript, unrecognized format) |
+| 2 | usage error (no session, ambiguous session, unsafe session id) |
 
 ## Development
 
 ```sh
-go test ./...                                   # offline, deterministic
-CTXED_TEST_TIKTOKEN=1 go test ./internal/tokenize/   # exercise the real tokenizer
+go test ./...                                    # offline, deterministic
+scripts/verify-functionally.sh --all             # real Claude Code + OpenCode sessions, cheap models
+CTXED_TEST_TIKTOKEN=1 go test ./internal/tokenize/
 ```
 
 Test fixtures under `testdata/` are trimmed, schema-faithful samples of a real

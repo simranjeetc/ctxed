@@ -2,7 +2,7 @@
 # Modular verification for ctxed.
 #
 # Usage:
-#   scripts/verify.sh                 # offline checks: build, unit tests, vet, openspec, plugin
+#   scripts/verify.sh                 # offline checks: build, unit tests, vet, openspec, parked plugin
 #   scripts/verify.sh --workspaces    # the above, run in every worktree of this repository
 #   scripts/verify.sh --live          # add the live, opt-in checks (Claude Code / OpenCode)
 #   scripts/verify.sh --all           # offline + live
@@ -15,10 +15,9 @@
 # feature: when the feature is absent the check FAILS, it never skips.
 #
 # Design: offline checks never touch the network, the model, or a real session,
-# so they run on every change and in CI. Live checks shell out to a real harness
-# and are opt-in. Nothing here rewrites a session or mutates the repo. The live
-# Claude Code check creates one throwaway session and deletes its project
-# directory afterwards.
+# so they run on every change and in CI. Live checks run
+# scripts/verify-functionally.sh against real harness sessions and are opt-in.
+# Nothing here rewrites a session or mutates the repo.
 #
 # Configuration (optional):
 #   CTXED_TEST_EXTRA_PATH    prepended to PATH, for tools installed off-PATH
@@ -97,16 +96,6 @@ build_binary() {
   go build -o "$BIN" ./cmd/ctxed
 }
 
-# categories_file <transcript> <model-response> — prints the path of a real
-# categories file (numbered buckets) built from a canned categorizer response.
-# The fixtures under testdata/ are model responses, not categories files, so a
-# selection like `--categories 2` resolves only after this step.
-categories_file() {
-  local out="$ROOT/.verify/$(basename "$1").categories.json"
-  "$BIN" categorize "$1" --categorizer-cmd "cat $2" --out "$out" >/dev/null || return 1
-  printf '%s\n' "$out"
-}
-
 # ---------------------------------------------------------------------------
 # Offline checks (run on every change)
 # ---------------------------------------------------------------------------
@@ -133,64 +122,29 @@ check_cli_inspect() {
   "$BIN" inspect testdata/claude_session.jsonl | grep -q '^TOTAL'
 }
 
-check_cli_drop() {
+check_cli_overview() {
   build_binary || return 1
-  local tmp; tmp="$(mktemp -d)"
-  # Entry 0 is a standalone reasoning block, so dropping it is structurally
-  # valid. A safe drop exits 0 and writes a smaller transcript.
-  "$BIN" drop testdata/claude_session.jsonl --indices 0 --out "$tmp/out.jsonl" >/dev/null 2>&1 || return 1
-  [[ -s "$tmp/out.jsonl" ]] || return 1
-  # Deterministic and non-destructive: a repeat produces identical bytes.
-  "$BIN" drop testdata/claude_session.jsonl --indices 0 --out "$tmp/again.jsonl" >/dev/null 2>&1 || return 1
-  cmp -s "$tmp/out.jsonl" "$tmp/again.jsonl" || return 1
-  # Dropping a tool call while its result is kept is refused (exit 3).
-  local rc=0
-  "$BIN" drop testdata/claude_session.jsonl --indices 1 --out "$tmp/bad.jsonl" >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -eq 3 ]]
+  # The canned response names two entries; the rest join the nearest topic.
+  local out insp
+  out="$("$BIN" overview testdata/opencode_session.json --json \
+        --categorizer-cmd "cat testdata/opencode_session.categorize.json")" || return 1
+  insp="$("$BIN" inspect testdata/opencode_session.json | sed -n 's/^TOTAL \([0-9]*\) entries · \([0-9,]*\) tokens.*/\1 \2/p' | tr -d ,)"
+  python3 -c '
+import json, sys
+r = json.load(sys.stdin); want = sys.argv[1].split()
+got = [str(r["entries"]), str(r["tokens"])]
+rows = [str(sum(x["entries"] for x in r["rows"])), str(sum(x["tokens"] for x in r["rows"]))]
+sys.exit(0 if got == want == rows else "overview %s, rows %s, inspect %s" % (got, rows, want))' "$insp" <<<"$out"
 }
 
-check_cli_prune_ids_only() {
+check_cli_parked_unreachable() {
   build_binary || return 1
-  local cats got
-  cats="$(categories_file testdata/claude_session.jsonl testdata/claude_session.categorize.json)" || return 1
-  got="$("$BIN" prune testdata/claude_session.jsonl --categories-file "$cats" --categories 2 --ids-only)" || return 1
-  local want='{"droppedIds":["c3990fee-117c-4879-90e0-158f2245a45e"],"droppedToolCallIds":["toolu_01JCsQr3BcKZ7jWo2ERi6wH6"]}'
-  [[ "$got" == "$want" ]] || { printf 'want: %s\ngot:  %s\n' "$want" "$got"; return 1; }
-}
-
-check_cli_prune_empty_selection() {
-  build_binary || return 1
-  local got want='{"droppedIds":[],"droppedToolCallIds":[]}'
-  got="$("$BIN" prune testdata/claude_session.jsonl --ids '' --ids-only)" || return 1
-  [[ "$got" == "$want" ]] || { printf 'want: %s\ngot:  %s\n' "$want" "$got"; return 1; }
-}
-
-check_cli_compact_instruction() {
-  build_binary || return 1
-  local cats got
-  cats="$(categories_file testdata/claude_session.jsonl testdata/claude_session.categorize.json)" || return 1
-  # stdout is exactly the sentence to paste after `/compact `; the caveat note
-  # goes to stderr.
-  got="$("$BIN" compact-instruction testdata/claude_session.jsonl \
-        --categories-file "$cats" --categories 2 2>/dev/null)" || return 1
-  local want='When you compact this session, keep the context about Adapter investigation, and drop the context about Tool output.'
-  [[ "$(wc -l <<<"$got" | tr -d ' ')" == 1 ]] || { echo "stdout is not one line:"; printf '%s\n' "$got"; return 1; }
-  [[ "$got" == "$want" ]] || { printf 'want: %s\ngot:  %s\n' "$want" "$got"; return 1; }
-}
-
-check_cli_unknown_id_refused() {
-  build_binary || return 1
-  # An unknown category id must be refused (exit 3), never silently dropped, on
-  # both the id-only and the transcript path. The categories file is valid, so
-  # the refusal is about the id and nothing else.
-  local cats rc
-  cats="$(categories_file testdata/claude_session.jsonl testdata/claude_session.categorize.json)" || return 1
-  rc=0
-  "$BIN" prune testdata/claude_session.jsonl --categories-file "$cats" --categories 99 --ids-only >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -eq 3 ]] || { echo "--ids-only: want exit 3, got $rc"; return 1; }
-  rc=0
-  "$BIN" prune testdata/claude_session.jsonl --categories-file "$cats" --categories 99 >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -eq 3 ]] || { echo "transcript: want exit 3, got $rc"; return 1; }
+  # Pruning is parked: the binary must not reach any of its commands.
+  local c rc
+  for c in drop prune compact-instruction opencode; do
+    rc=0; "$BIN" "$c" >/dev/null 2>&1 || rc=$?
+    [[ "$rc" -eq 2 ]] || { echo "ctxed $c: want exit 2 (unknown command), got $rc"; return 1; }
+  done
 }
 
 check_offline_purity() {
@@ -206,7 +160,7 @@ check_offline_purity() {
   [[ -s "$tmp/out.json" ]]
 }
 
-# --- Plugin (OpenCode) offline: source tests only ---
+# --- Parked: the OpenCode prune plugin's own tests still run ---
 
 check_plugin_opencode_tests() {
   local dir="plugin/opencode"
@@ -217,118 +171,11 @@ check_plugin_opencode_tests() {
   ( cd "$dir" && node --test test/ )
 }
 
-check_plugin_opencode_no_policy() {
-  local f="plugin/opencode/src/core.ts"
-  [[ -f "$f" ]] || { echo "missing $f"; return 1; }
-  # The plugin must carry no prune policy: it runs ctxed, presents the buckets
-  # ctxed returned, and filters by id. It may not decide bucket membership or
-  # resolve a selection itself. The precise guard is the plugin's own
-  # no-policy.test.ts; this is the coarse offline mirror.
-  ! grep -qiE 'orphan|validity|classif' "$f"
-}
-
 # ---------------------------------------------------------------------------
-# Live checks (opt-in; shell out to a real harness)
+# Live checks (opt-in; real harness sessions, cheap models)
 # ---------------------------------------------------------------------------
 
-# Claude Code: prove the offline half end-to-end against a real transcript, and
-# print the exact in-session step. The transcript comes from a throwaway session
-# this check creates (never an arbitrary one already on disk), and the project
-# directory Claude Code made for it is deleted afterwards.
-check_live_claude_cli() {
-  need claude "Claude Code CLI, authenticated" || return 1
-  need python3 "Python 3" || return 1
-  build_binary || return 1
-  local tmp project sid rc=0
-  tmp="$(mktemp -d)"
-  project="$(claude_project_dir "$tmp")"
-  [[ -e "$project" ]] && { echo "$project already exists; refusing to reuse it"; rm -rf "$tmp"; return 1; }
-  sid="$(cd "$tmp" && claude -p --model "$CLAUDE_MODEL" --output-format json 'Reply with only: ok' 2>/dev/null \
-        | python3 -c 'import json,sys
-try: print(json.load(sys.stdin).get("session_id",""))
-except Exception: print("")')"
-  if [[ -n "$sid" ]]; then
-    live_claude_cli_steps "$project/$sid.jsonl" || rc=$?
-  else
-    echo "claude -p in $tmp returned no session id"; rc=1
-  fi
-  rm -rf "$project" "$tmp"
-  return "$rc"
-}
-
-live_claude_cli_steps() {
-  local transcript="$1"
-  [[ -f "$transcript" ]] || { echo "no transcript at $transcript"; return 1; }
-  "$BIN" inspect "$transcript" | grep -q '^TOTAL' || return 1
-  local tmp; tmp="$(mktemp -d)"
-  # Deterministic, offline categorize: a canned response that splits the
-  # transcript's real entry ids into two buckets (ctxed requires at least two).
-  python3 - "$transcript" "$tmp/response.json" <<'PY2'
-import json, sys
-ids = []
-for line in open(sys.argv[1]):
-    try: o = json.loads(line)
-    except Exception: continue
-    if o.get("type") in ("user", "assistant") and o.get("uuid"):
-        ids.append(o["uuid"])
-half = max(1, len(ids) // 2)
-json.dump({"categories": [{"label": "first", "ids": ids[:half]}, {"label": "second", "ids": ids[half:]}]},
-          open(sys.argv[2], "w"))
-PY2
-  "$BIN" categorize "$transcript" --categorizer-cmd "cat $tmp/response.json" --out "$tmp/cat.json" \
-      || { rm -rf "$tmp"; return 1; }
-  [[ -s "$tmp/cat.json" ]]; local rc=$?
-  rm -rf "$tmp"
-  return "$rc"
-}
-
-# claude_project_dir <dir> — the directory Claude Code keeps sessions started in
-# <dir> under: its real path with every non-alphanumeric character replaced.
-claude_project_dir() {
-  local real; real="$(cd "$1" && pwd -P)"
-  printf '%s/.claude/projects/%s\n' "$HOME" "${real//[^a-zA-Z0-9]/-}"
-}
-
-check_live_claude_resume_hint() {
-  # Not an assertion: print the manual step a human must do in a real session.
-  # Recorded so the live flow is documented at run time.
-  note "Claude Code live step (manual)"
-  cat <<'EOF'
-     1. go build -o ctxed ./cmd/ctxed
-     2. ./ctxed categorize <transcript> --model M
-     3. edit the buckets in <transcript>.categories.json
-     4. ./ctxed compact-instruction <transcript> \
-            --categories-file <f> --categories <ids>
-     5. paste the printed sentence after `/compact ` in the live session
-   This step is model-mediated and cannot be asserted automatically.
-EOF
-}
-
-# OpenCode: the dispatch hook needs a live OpenCode. We assert the pieces we
-# can, then print what a human must do to close task 3.1.
-check_live_opencode_pieces() {
-  local dir="plugin/opencode"
-  need node "Node.js" || return 1
-  [[ -d "$dir" ]] || { echo "missing $dir"; return 1; }
-  build_binary || return 1
-  ( cd "$dir" && node --test test/ ) || return 1
-  # The id-only output must be a single-line JSON object.
-  local cats got
-  cats="$(categories_file testdata/opencode_session.json testdata/opencode_session.categorize.json)" || return 1
-  got="$("$BIN" prune testdata/opencode_session.json --categories-file "$cats" --categories 1 --ids-only)" || return 1
-  [[ "$(wc -l <<<"$got" | tr -d ' ')" == 1 && "$got" == '{"droppedIds":['* ]] || { echo "got: $got"; return 1; }
-}
-
-check_live_opencode_dispatch_hint() {
-  note "OpenCode live step (manual, closes task 3.1)"
-  cat <<'EOF'
-     - configure CTXED_PLUGIN_CTXED_PATH, CTXED_PLUGIN_SESSION_EXPORT,
-       CTXED_PLUGIN_CATEGORIES_FILE, CTXED_PLUGIN_CATEGORIES
-     - dispatch in a live OpenCode session and confirm the dropped message is
-       absent from the request while the stored session is unchanged
-     - also confirm the live message id equals the session-export entry id
-EOF
-}
+check_live() { "$ROOT/scripts/verify-functionally.sh" "$1"; }
 
 # ---------------------------------------------------------------------------
 # Groups
@@ -345,27 +192,20 @@ run_offline() {
   run "openspec:validate"   check_openspec
 
   note "offline: cli"
-  run "cli:inspect"             check_cli_inspect
-  run "cli:drop"                check_cli_drop
-  run "cli:prune --ids-only"    check_cli_prune_ids_only
-  run "cli:prune empty"         check_cli_prune_empty_selection
-  run "cli:compact-instruction" check_cli_compact_instruction
-  run "cli:unknown-id refused"  check_cli_unknown_id_refused
-  run "cli:offline purity"      check_offline_purity
+  run "cli:inspect"                 check_cli_inspect
+  run "cli:overview"                check_cli_overview
+  run "cli:parked unreachable"      check_cli_parked_unreachable
+  run "cli:offline purity"          check_offline_purity
 
-  note "offline: plugin/opencode"
-  run "plugin:opencode:tests"     check_plugin_opencode_tests
-  run "plugin:opencode:no-policy" check_plugin_opencode_no_policy
+  note "offline: parked plugin/opencode"
+  run "parked:plugin:opencode:tests" check_plugin_opencode_tests
 }
 
 run_live() {
-  note "live: Claude Code"
-  run "live:claude:cli"  check_live_claude_cli
-  check_live_claude_resume_hint
-
-  note "live: OpenCode"
-  run "live:opencode:pieces" check_live_opencode_pieces
-  check_live_opencode_dispatch_hint
+  local any=0
+  [[ $LIVE_CLAUDE -eq 1 ]] && { note "live: Claude Code"; run "live:claude" check_live --claude; any=1; }
+  [[ $LIVE_OPENCODE -eq 1 ]] && { note "live: OpenCode"; run "live:opencode" check_live --opencode; any=1; }
+  [[ $any -eq 1 ]] || { note "live: both harnesses"; run "live:all" check_live --all; }
 }
 
 run_here() {

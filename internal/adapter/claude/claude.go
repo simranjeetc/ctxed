@@ -140,6 +140,7 @@ func (a *Adapter) Parse(data []byte) (*session.Document, error) {
 			continue
 		}
 		if i < boundary && !preserved[l.UUID] {
+			doc.Compacted++
 			continue // compacted away: kept verbatim, never an entry
 		}
 		e := &session.Entry{ID: l.UUID, Role: l.Message.Role, Raw: json.RawMessage(raw)}

@@ -46,16 +46,15 @@ func RunWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return ExitUsage
 	}
 	switch args[0] {
+	// Pruning (drop, prune, compact-instruction, opencode) is parked: its code
+	// stays in this package but no command reaches it. See
+	// openspec/changes/context-overview.
+	case "overview":
+		return runOverview(args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
-	case "drop":
-		return runDrop(args[1:], stdout, stderr)
 	case "categorize":
 		return runCategorize(args[1:], stdin, stdout, stderr)
-	case "prune":
-		return runPrune(args[1:], stdin, stdout, stderr)
-	case "compact-instruction":
-		return runCompactInstruction(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return ExitOK
@@ -70,33 +69,30 @@ func RunWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `ctxed — inspect and edit an agent session's context window
+	fmt.Fprint(w, `ctxed — show what an agent session's context is made of
 
 Usage:
+  ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD]
+                [--max-categories N]
   ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
-  ctxed drop    <session> --indices 3,7,9 [--out FILE] [--json] [--force]
-                [--model M] [--tokenizer ENC]
   ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
-  ctxed prune   <session> (--categories-file F --categories 1,3 | --ids id1,id2)
-                [--ids-only]
-  ctxed compact-instruction <session> --categories-file F --categories 1,3
 
-  <session> may be a file path, or "-" to read a transcript on stdin.
-  On stdin, the categories file's session field is "-".
-  For categorize, --out "-" prints the categories document to stdout.
+  <session> is a Claude Code transcript (.jsonl) or an OpenCode export (.json);
+  for categorize it may be "-" to read stdin. overview with no <session> uses
+  --session, else the session it runs in (CLAUDE_CODE_SESSION_ID or
+  OPENCODE_SESSION_ID).
 
 Commands:
-  inspect             print each entry: index, role, kind, tokens, first-line preview
-  drop                write a copy of the session with the given entries removed
-  categorize          group entries into high-level categories and write an editable file
-  prune               emit the transcript with selected entries excluded (no write)
-  compact-instruction print a Claude Code /compact instruction for the selected buckets
+  overview    topics in the live context, each with messages, tokens, share and
+              status, plus what is still pending (read-only)
+  inspect     print each live entry: index, role, kind, tokens, first-line preview
+  categorize  group entries into high-level categories and write an editable file
 
-Flags:
-  prune --ids-only   print {"droppedIds":[…]} (the resolved drop set) instead of a transcript
+Token counts are estimates unless --model/--tokenizer selects a real tokenizer.
+Topic status and pending items are a model's reading of the session.
 
-Exit codes: 0 ok, 1 error, 2 usage, 3 refused (invalid or unsafe selection)
+Exit codes: 0 ok, 1 error, 2 usage
 `)
 }
 

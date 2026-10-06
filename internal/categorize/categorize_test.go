@@ -1,6 +1,7 @@
 package categorize_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,12 +33,17 @@ func loadDoc(t *testing.T) *session.Document {
 	return doc
 }
 
-func TestPromptListsEntryIDs(t *testing.T) {
+// Entries are numbered, not listed by id: a model answering with ids spends
+// most of its output (and time) copying them.
+func TestPromptNumbersEntries(t *testing.T) {
 	doc := loadDoc(t)
 	p := categorize.Prompt(doc, 5, 30000)
-	for _, e := range doc.Entries {
-		if !strings.Contains(p, e.ID) {
-			t.Fatalf("prompt missing id %q", e.ID)
+	for i, e := range doc.Entries {
+		if !strings.Contains(p, fmt.Sprintf("- [%d] role=%s ", i+1, e.Role)) {
+			t.Fatalf("prompt missing entry %d", i+1)
+		}
+		if strings.Contains(p, e.ID) {
+			t.Fatalf("prompt lists id %q", e.ID)
 		}
 	}
 }
@@ -185,5 +191,60 @@ func TestLoadRejectsUnknownID(t *testing.T) {
 	doc := loadDoc(t)
 	if _, err := categorize.Load([]byte(`{"categories":[{"id":1,"label":"A","entryIds":["nope"]},{"id":2,"label":"B","entryIds":[]}]}`), doc); err == nil {
 		t.Fatal("expected an error")
+	}
+}
+
+func TestParseStatusAndPending(t *testing.T) {
+	doc := loadDoc(t)
+	ids := []string{doc.Entries[0].ID, doc.Entries[1].ID, doc.Entries[2].ID}
+	resp := `{"categories":[` +
+		`{"label":"A","status":"Done","ids":["` + ids[0] + `"]},` +
+		`{"label":"B","status":"in progress","ids":["` + ids[1] + `"]},` +
+		`{"label":"C","status":"maybe","ids":["` + ids[2] + `"]}],` +
+		`"pending":[" set the URL ","","b","c","d","e","f"]}`
+	f, err := categorize.Parse(resp, doc, tokenize.Approximation{}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{f.Categories[0].Status, f.Categories[1].Status, f.Categories[2].Status}
+	want := []string{categorize.StatusDone, categorize.StatusInProgress, ""}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("statuses %q, want %q", got, want)
+		}
+	}
+	if len(f.Pending) != 5 || f.Pending[0] != "set the URL" {
+		t.Fatalf("pending %q", f.Pending)
+	}
+}
+
+func TestPromptAsksForStatusAndPending(t *testing.T) {
+	p := categorize.Prompt(loadDoc(t), 5, 30000)
+	for _, s := range []string{`"status"`, `"pending"`, "in_progress"} {
+		if !strings.Contains(p, s) {
+			t.Fatalf("prompt does not mention %s", s)
+		}
+	}
+}
+
+func TestParseNumbersAndRanges(t *testing.T) {
+	doc := loadDoc(t)
+	if len(doc.Entries) < 4 {
+		t.Skip("fixture too small")
+	}
+	n := len(doc.Entries)
+	resp := fmt.Sprintf(`{"categories":[{"label":"A","ids":[1,"2"]},{"label":"B","ids":["3-%d","%d"]},{"label":"C","ids":["0","99999-100000"]}]}`, n+5, n)
+	f, err := categorize.Parse(resp, doc, tokenize.Approximation{}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Categories) != 2 || f.Categories[0].Count != 2 || f.Categories[1].Count != n-2 {
+		t.Fatalf("categories %+v", f.Categories)
+	}
+	if f.Categories[0].IDs[0] != doc.Entries[0].ID || f.Categories[1].IDs[0] != doc.Entries[2].ID {
+		t.Fatalf("numbers resolved to the wrong entries: %+v", f.Categories)
+	}
+	if len(f.Uncategorized) != 0 {
+		t.Fatalf("uncategorized %v", f.Uncategorized)
 	}
 }

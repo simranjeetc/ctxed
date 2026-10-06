@@ -1,6 +1,6 @@
 ---
 name: ctxed-prune-context
-description: Drop a topic bucket from the current Claude Code session's context without restarting it. Use when the user says "prune context", "drop this topic", "context is too heavy", "free up context", "forget the <topic> discussion", or asks to reduce what the model is carrying.
+description: Claude Code only; in OpenCode use the ctxed-prune skill instead. Drop a topic bucket from the current Claude Code session's context without restarting it. Use when the user says "prune context", "drop this topic", "context is too heavy", "free up context", "forget the <topic> discussion", or asks to reduce what the model is carrying.
 allowed-tools: Bash(ctxed:*), Bash(ls:*), Bash(cat:*), Bash(command:*)
 license: MIT
 compatibility: Requires the ctxed CLI on PATH and a Claude Code session transcript.

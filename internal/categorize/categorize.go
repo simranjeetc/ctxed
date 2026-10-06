@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -25,7 +27,19 @@ type Category struct {
 	IDs    []string `json:"entryIds"`
 	Count  int      `json:"entryCount"`
 	Tokens int      `json:"tokens"`
+	// Status is the model's judgement of the topic: StatusDone, StatusInProgress,
+	// or "" when it gave none (or an unknown value).
+	Status string `json:"status,omitempty"`
 }
+
+// Topic statuses a model may return.
+const (
+	StatusDone       = "done"
+	StatusInProgress = "in_progress"
+)
+
+// maxPending bounds the pending items kept from a model response.
+const maxPending = 5
 
 // TokenInfo describes how tokens were counted.
 type TokenInfo struct {
@@ -40,6 +54,8 @@ type File struct {
 	Tokenizer     TokenInfo  `json:"tokenizer"`
 	Categories    []Category `json:"categories"`
 	Uncategorized []string   `json:"uncategorized,omitempty"`
+	// Pending lists what the session has left open, as the model read it.
+	Pending []string `json:"pending,omitempty"`
 }
 
 // Prompt builds the categorization prompt for a session. The prompt is bounded
@@ -54,9 +70,15 @@ func Prompt(doc *session.Document, max int, maxBytes int) string {
 	fmt.Fprintf(&b, "You are given the entries of a working session, oldest first.\n")
 	fmt.Fprintf(&b, "Group them into between 2 and %d high-level categories that describe what the session is about\n", max)
 	fmt.Fprintf(&b, "(for example \"Claude Code adapter work\", \"OpenCode investigation\").\n")
-	fmt.Fprintf(&b, "Use each entry id exactly as given. Assign every entry to exactly one category.\n")
+	fmt.Fprintf(&b, "Refer to entries by their [number]; give a run of consecutive entries as a range like \"4-17\".\n")
+	fmt.Fprintf(&b, "Assign every entry to exactly one category.\n")
+	fmt.Fprintf(&b, "For each category give a status: \"done\" if its work was finished, confirmed or abandoned;\n")
+	fmt.Fprintf(&b, "\"in_progress\" if it is still being worked on or waiting on something. The last entries are\n")
+	fmt.Fprintf(&b, "the most recent: a topic being worked on there is in_progress unless they say it is finished.\n")
+	fmt.Fprintf(&b, "Also list up to %d short items that are still pending (open questions, unfinished steps,\n", maxPending)
+	fmt.Fprintf(&b, "things the user asked for that are not done yet).\n")
 	fmt.Fprintf(&b, "Return only JSON, no prose:\n")
-	fmt.Fprintf(&b, `{"categories":[{"label":"...","ids":["...","..."]}]}`+"\n\nEntries:\n")
+	fmt.Fprintf(&b, `{"categories":[{"label":"...","status":"done","ids":["1-12","15"]}],"pending":["..."]}`+"\n\nEntries:\n")
 	header := b.String()
 
 	if len(doc.Entries) == 0 {
@@ -92,8 +114,12 @@ func Prompt(doc *session.Document, max int, maxBytes int) string {
 		}
 	}
 
+	pos := make(map[*session.Entry]int, len(doc.Entries))
+	for i, e := range doc.Entries {
+		pos[e] = i + 1
+	}
 	for _, e := range entries {
-		fmt.Fprintf(&b, "- id=%s role=%s kind=%s: %s\n", e.ID, e.Role, e.Kind, snippet(e.Text, snippetLen))
+		fmt.Fprintf(&b, "- [%d] role=%s kind=%s: %s\n", pos[e], e.Role, e.Kind, snippet(e.Text, snippetLen))
 	}
 	return b.String()
 }
@@ -102,10 +128,10 @@ func Prompt(doc *session.Document, max int, maxBytes int) string {
 // estimate is deliberately conservative: it assumes the snippet is truncated and
 // carries the "…" marker, so the fitted prompt stays within budget.
 func entryLineLen(e *session.Entry, snippetLen int) int {
-	// "- id=" (5) + id + " role=" (6) + role + " kind=" (6) + kind + ": " (2)
-	// + snippet + "…" (3) + "\n" (1)
-	const fixed = 23
-	return len(e.ID) + len(e.Role) + len(e.Kind) + snippetLen + fixed
+	// "- [" (3) + number (at most 7) + "] role=" (7) + role + " kind=" (6) + kind
+	// + ": " (2) + snippet + "…" (3) + "\n" (1)
+	const fixed = 29
+	return len(e.Role) + len(e.Kind) + snippetLen + fixed
 }
 
 func promptFits(entries []*session.Entry, budget, snippetLen int) bool {
@@ -135,9 +161,11 @@ func sampleEntries(entries []*session.Entry, n int) []*session.Entry {
 
 type modelResponse struct {
 	Categories []struct {
-		Label string   `json:"label"`
-		IDs   []string `json:"ids"`
+		Label  string            `json:"label"`
+		Status string            `json:"status"`
+		IDs    []json.RawMessage `json:"ids"`
 	} `json:"categories"`
+	Pending []string `json:"pending"`
 }
 
 // Parse turns a model response into a validated File, resolving ids against the
@@ -175,9 +203,9 @@ func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) 
 		if label == "" {
 			label = fmt.Sprintf("Category %d", i+1)
 		}
-		cat := Category{Label: label}
+		cat := Category{Label: label, Status: normalizeStatus(c.Status)}
 		seen := map[string]bool{}
-		for _, id := range c.IDs {
+		for _, id := range resolveRefs(c.IDs, order) {
 			e, ok := known[id]
 			if !ok || seen[id] || assigned[id] {
 				continue
@@ -203,7 +231,70 @@ func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) 
 			f.Uncategorized = append(f.Uncategorized, id)
 		}
 	}
+	for _, p := range mr.Pending {
+		if p = strings.TrimSpace(p); p != "" && len(f.Pending) < maxPending {
+			f.Pending = append(f.Pending, p)
+		}
+	}
 	return f, nil
+}
+
+var (
+	numberRe = regexp.MustCompile(`^\s*(\d+)\s*$`)
+	rangeRe  = regexp.MustCompile(`^\s*(\d+)\s*-\s*(\d+)\s*$`)
+)
+
+// resolveRefs turns a category's entry references into entry ids. A reference
+// is an entry's [number] from the prompt (a JSON number or a numeric string),
+// a range "a-b" of numbers, or an entry id. Out-of-range numbers are ignored.
+func resolveRefs(refs []json.RawMessage, order []string) []string {
+	var out []string
+	at := func(n int) {
+		if n >= 1 && n <= len(order) {
+			out = append(out, order[n-1])
+		}
+	}
+	for _, raw := range refs {
+		var n int
+		if json.Unmarshal(raw, &n) == nil {
+			at(n)
+			continue
+		}
+		var s string
+		if json.Unmarshal(raw, &s) != nil {
+			continue
+		}
+		if m := numberRe.FindStringSubmatch(s); m != nil {
+			n, _ = strconv.Atoi(m[1])
+			at(n)
+		} else if m := rangeRe.FindStringSubmatch(s); m != nil {
+			lo, _ := strconv.Atoi(m[1])
+			hi, _ := strconv.Atoi(m[2])
+			if lo < 1 {
+				lo = 1
+			}
+			if hi > len(order) {
+				hi = len(order)
+			}
+			for k := lo; k <= hi; k++ {
+				at(k)
+			}
+		} else {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// normalizeStatus maps a model's status to StatusDone, StatusInProgress or "".
+func normalizeStatus(s string) string {
+	switch strings.ToLower(strings.NewReplacer(" ", "_", "-", "_").Replace(strings.TrimSpace(s))) {
+	case "done", "finished", "complete", "completed":
+		return StatusDone
+	case "in_progress", "pending", "open", "ongoing":
+		return StatusInProgress
+	}
+	return ""
 }
 
 // Load parses and validates a categories document against the session.

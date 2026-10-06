@@ -63,7 +63,10 @@ the buckets to drop (the selected ids), by label.
 - **Alternative considered:** a settings hook that rewrites the request.
   Rejected — hooks only add context (§2.1).
 
-### D3b: A `session.compact` mod (specified, not built)
+### D3b: A `session.compact` mod (specified, then dropped)
+
+**Dropped 2026-10-06.** The `/compact` instruction is the only Claude Code path;
+a codeword test checks it. Kept below as the record of what the mod would do.
 
 A Claude Code mod registers the `session.compact` hook, classifies the live
 message list into the selected buckets, drops the selected ones, and returns the

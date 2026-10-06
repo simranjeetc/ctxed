@@ -53,27 +53,19 @@ not entries and are preserved verbatim on write. Tool calls (`tool_use`) and
 results (`tool_result`) live in separate lines, so dropping one without the other
 is detected as an orphan.
 
+**Compaction.** Claude Code appends a `compact_boundary` line, then a summary
+line (`isCompactSummary`), and may keep a tail of earlier lines live
+(`compactMetadata.preservedMessages`). The adapter's entries are the live
+context only: summary, preserved lines, then everything after the boundary.
+Earlier lines are kept verbatim and counted in `Document.Compacted`.
+
 ```sh
+ctxed overview --session <session-uuid>
 ctxed inspect  ~/.claude/projects/<project>/<session>.jsonl
-ctxed drop     ~/.claude/projects/<project>/<session>.jsonl --indices 3,7
 ```
 
-**Live prune.** Hooks (`~/.claude/settings.json`) and in-process mods cannot
-rewrite the outbound message list, and the `.jsonl` transcript is written
-asynchronously — editing it mid-session does nothing until a `--resume`
-relaunch. The only live, message-replacing surface is compaction. `ctxed
-compact-instruction` renders the bucket selection as a `/compact` instruction to
-paste into the running session:
-
-```sh
-ctxed categorize          ~/.claude/projects/<project>/<session>.jsonl --model gpt-4o
-ctxed compact-instruction ~/.claude/projects/<project>/<session>.jsonl \
-    --categories-file session.categories.json --categories 2
-# paste the printed sentence after `/compact ` in the session
-```
-
-See `openspec/changes/add-claude-code-live-prune` for the decision record and
-the follow-up exact-drop mod.
+Inside Claude Code, `CLAUDE_CODE_SESSION_ID` names the current session, so
+`ctxed overview` needs no argument.
 
 ### OpenCode — export, edit
 
@@ -86,17 +78,23 @@ the database.
 opencode session list
 opencode session export <session-id> > session.json
 ctxed inspect session.json
-ctxed drop    session.json --indices 3,7,9   # writes session.edited.json
+ctxed overview --session <session-id>     # exports it itself
 ```
+
+Inside OpenCode, `OPENCODE_SESSION_ID` names the current session. ctxed exports
+to a temp file: a large export piped to another process is cut short.
+
+**Compaction.** OpenCode keeps every message and adds a `compaction` item with a
+`summary` and a `recent` field. The model then sees that item — summary plus
+`recent`, a verbatim tail of the older conversation (default about 15k tokens,
+`compaction.keep.tokens`) — and the messages after it. The adapter mirrors
+that: the last compaction item is a `summary` entry carrying both fields, and
+messages before it are counted in `Document.Compacted`, not as entries.
 
 **Returning an edit to OpenCode is not supported in place.** `opencode session
 import` rejects an edited export of a session that already exists locally
-(`UNIQUE constraint failed: session_message.id` — the message ids collide), and
-regenerating ids would create a *new* session rather than continue the existing
-one. So the edited document is a portable artifact, not an in-place write.
-Continuing a live OpenCode session with pruned context is done non-destructively
-at dispatch instead; see the `add-category-prune` change and
-`docs/plugin-contract.md`.
+(`UNIQUE constraint failed: session_message.id`), so an edited document is a
+portable artifact, not an in-place write.
 
 `opencode session export --sanitize` redacts transcript and file data before
 export, which is useful when the session may contain secrets.

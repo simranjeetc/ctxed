@@ -125,3 +125,41 @@ func TestNonEntryMessagePreservedOnWrite(t *testing.T) {
 		t.Fatalf("expected only the idle message to remain, got %+v", got.Messages)
 	}
 }
+
+// A compacted export: only the last compaction (as a summary carrying its
+// summary and kept tail) and what follows it are entries; writing keeps every item.
+func TestParseCompactedShowsLiveContext(t *testing.T) {
+	data := []byte(`{"info":{"id":"ses_x"},"messages":[
+{"type":"user","id":"m1","text":"old one"},
+{"type":"compaction","id":"c1","summary":"first summary","recent":"first tail"},
+{"type":"assistant","id":"m2","content":[{"type":"text","text":"old two"}]},
+{"type":"compaction","id":"c2","summary":"SUMMARY","recent":"[User]: TAIL"},
+{"type":"user","id":"m3","text":"new"},
+{"type":"idle"}]}`)
+	a := &opencode.Adapter{}
+	doc, err := a.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Compacted != 2 {
+		t.Fatalf("compacted %d, want 2", doc.Compacted)
+	}
+	if len(doc.Entries) != 2 {
+		t.Fatalf("entries %d, want 2", len(doc.Entries))
+	}
+	s := doc.Entries[0]
+	if s.ID != "c2" || s.Kind != session.KindSummary || s.Text != "SUMMARY\n[User]: TAIL" {
+		t.Fatalf("summary entry %+v", s)
+	}
+	if doc.Entries[1].ID != "m3" {
+		t.Fatalf("live entry %q", doc.Entries[1].ID)
+	}
+	out, err := a.Write(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top struct{ Messages []json.RawMessage }
+	if err := json.Unmarshal(out, &top); err != nil || len(top.Messages) != 6 {
+		t.Fatalf("write kept %d items (%v), want 6", len(top.Messages), err)
+	}
+}

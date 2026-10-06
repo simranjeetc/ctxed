@@ -13,8 +13,9 @@ pre-filter, not the gate.
 
 - **Functional tests are the gate** — `scripts/verify-functionally.sh`.
 - **Offline tests are a pre-filter** — `scripts/verify.sh`. Fast, offline; not proof.
-- **Assertions are on outcomes** a user can see: the session shrank, the session
-  id is unchanged, stored history is untouched, the session continues.
+- **Assertions are on outcomes** a user can see: the overview finds the session
+  it runs in, its numbers add up and match `ctxed inspect`, the session is
+  untouched, and after a compaction only the live context is counted.
 
 ## Two verification agents, one per harness
 
@@ -41,65 +42,38 @@ The coordinator (main session) does three things and nothing more:
 
 ## Functional scenarios (the ones that matter)
 
-### OpenCode — `scripts/verify-functionally.sh --opencode`
+Both scenarios run the same steps against a real session in their harness,
+created by the script and deleted afterwards:
 
-1. Create a throwaway session with `opencode run` and a canned prompt.
-2. Export it; `ctxed inspect` and `categorize` it (offline categorizer: the test
-   feeds ctxed the real entry ids, so no model call is needed for this half).
-3. Resolve a bucket selection to dropped ids via `prune --ids-only`.
-4. Run the in-session command and the dispatch hook, and assert:
-   - **the buckets are visible in the session** — asserted on the session's
-     messages, not the server log. A command's `console.log` lands in the server
-     log, so asserting there passes even when the user sees nothing;
-   - the selected bucket's messages are absent from the request (by id, from
-     the plugin's dispatch log);
-   - the message carrying a file attachment is in the dropped bucket and absent
-     from the request;
-   - a message added **after** the selection is kept, even on the dropped
-     topic, while the selected messages stay dropped in the same dispatch (by
-     id). A selection covers only the messages it was made over;
-   - stored history is unchanged and the session continues;
-   - **id parity** — the ids ctxed categorizes over are the ids the hook filters.
-     If this fails, the plugin must match on content/tool-id — the top risk.
-5. **Negative control** — the exact-drop check runs again against the same
-   dispatch with no selection applied (the transcript the hook received) and
-   must fail there. A check that cannot fail is not a check.
-6. Model-recall questions ("what was in the attached file?", "what is the code
-   word?") are **soft** (see Reports). Each uses its own `NONE-<n>` token and
-   reads only the reply to that question.
-7. The categorizer stub sleeps ~3 s, like a real model, so the plugin's command
-   timeout is genuinely exercised.
-8. Every turn waits for the session to go idle (OpenCode's active-session and
-   inbox state), with a hard timeout that names the step. No fixed sleeps.
+1. **Plant two topics.** TOPIC-PELICAN is asked for, then confirmed finished.
+   TOPIC-TURBINE ends on an open TODO naming a unique item (`WIDGET-<pid>`).
+2. **Run `ctxed overview --json` as the skill does**: no arguments, with the
+   session id in `CLAUDE_CODE_SESSION_ID` / `OPENCODE_SESSION_ID`, and a stub
+   categorizer that groups by topic marker.
+3. **Totals (hard):** the rows add up to the header, no entry is in two rows,
+   and the header equals `ctxed inspect` on the same session.
+4. **Read-only (hard):** the Claude Code transcript is byte-identical; the
+   OpenCode export's stored messages have the same digest.
+5. **Real model (hard):** the overview again, with the harness's own cheap model
+   (`claude -p --model haiku`, `opencode run` with the OpenCode Go model). The
+   row holding the PELICAN message is `done`; the row holding the TURBINE
+   message is `in_progress`, and is a different row. **Soft:** the open item (or
+   "URL") appears under pending.
+6. **Compaction (hard):** compact the session (`claude -p --resume <id>
+   "/compact"`; OpenCode `POST /api/session/<id>/compact`), run the overview
+   again: earlier messages are reported as not counted, the last row is the
+   compaction, and the totals still equal `inspect`. **Negative control:** the
+   compacted overview checked against the pre-compaction `inspect` must fail.
 
-### OpenCode self-configuration — `--opencode` (second scenario)
+| | `--opencode` | `--claude` |
+|---|---|---|
+| Session | scratch `opencode serve`, no plugins, real store | `claude -p` in a scratch dir |
+| Cleanup | scratch session deleted | scratch project dir deleted |
+| Last run (2026-10-06) | 9 hard pass, 1 soft pass, ~25 s | 9 hard pass, 1 soft pass, ~75 s |
 
-A second scenario starts the server the way a real install does: **minimal PATH,
-no `CTXED_PLUGIN_*` at all**. OpenCode's server runs as a launchd daemon with a
-minimal PATH, and a local plugin cannot take options from `opencode.json`. The
-plugin must resolve `ctxed` and a categorizer on its own, and its output must be
-visible in the session. Without this scenario a plugin that only works when the
-test supplies its configuration passes while the real install fails.
-
-To make the plugin run this checkout's `ctxed`, the scenario puts a shim for the
-freshly built binary at the first location the plugin searches (`~/go/bin/ctxed`,
-read from `resolveCtxedPath`), moves any existing file aside, and restores it on
-exit, including on failure and Ctrl-C. The shim records each call, so the
-scenario asserts the plugin resolved that path.
-
-### Claude Code — `scripts/verify-functionally.sh --claude`
-
-1. Create a throwaway session with `claude -p --output-format json`.
-2. Locate its transcript; `inspect` it.
-3. `categorize` → `compact-instruction` → the instruction sentence.
-4. Drive compaction headlessly (`claude -p --resume <id> "/compact <instr>"`).
-5. Assert compaction happened, on what it writes: exactly one new
-   `compact_boundary` line whose `compactMetadata.postTokens < preTokens`,
-   followed by an `isCompactSummary` entry. (Compaction appends, so an entry
-   count always changes and cannot be the check.) Then assert `ctxed inspect`
-   reads the live context (summary first), the session id is unchanged, and the
-   session continues.
-6. When the D3b mod lands, add the same assertions against an exact bucket drop.
+The old prune scenarios are parked with the pruning code, in
+`parked/verify-prune-functionally.sh`; they cannot run against the current
+binary.
 
 ## Reports (the verifier's contract)
 
@@ -163,9 +137,12 @@ regression — which is what we actually care about.
 
 ## Known limits (stated honestly)
 
-- Categorizer **quality** (are the buckets good?) is not asserted — only that the
-  flow runs and the selection is honored.
-- Claude Code's `/compact` is model-mediated: the scenario asserts the session
-  changed and continued, not that a specific message survived verbatim. The D3b
-  mod removes that dependency once built.
-- The OpenCode dispatch assertions (4.1–4.4) are pending the in-session command.
+- Topic **labels** and **grouping** are not asserted beyond the two planted
+  topics landing in different rows; status is asserted on those two only.
+- Token counts are estimates (four runes per token); the check is that they
+  are consistent with `inspect`, not that they match the provider's count.
+- The `ctxed-overview` skill itself (an agent choosing to run the command) is
+  not driven by the suite; the suite runs the command the skill runs, in the
+  environment the skill runs it in.
+- A live Claude Code transcript is written as the session runs; the newest
+  turn can be missing from an overview taken mid-turn.

@@ -23,7 +23,7 @@ const (
 
 func run(args ...string) (code int, stdout, stderr string) {
 	var out, errBuf bytes.Buffer
-	code = cli.Run(args, &out, &errBuf)
+	code = cli.RunWithParked(args, strings.NewReader(""), &out, &errBuf)
 	return code, out.String(), errBuf.String()
 }
 
@@ -805,7 +805,7 @@ func assertNoEditedFile(t *testing.T, in string) {
 // runStdin is run() with an explicit stdin, for the piped-transcript path.
 func runStdin(stdin string, args ...string) (code int, stdout, stderr string) {
 	var out, errBuf bytes.Buffer
-	code = cli.RunWithStdin(args, strings.NewReader(stdin), &out, &errBuf)
+	code = cli.RunWithParked(args, strings.NewReader(stdin), &out, &errBuf)
 	return code, out.String(), errBuf.String()
 }
 
@@ -954,7 +954,7 @@ func TestCategorizeCompactedSeesOnlyLiveEntries(t *testing.T) {
 	if strings.Contains(string(sent), compactedPreBoundaryID) || strings.Contains(string(sent), "Topic one") {
 		t.Fatalf("the categorizer was shown pre-boundary entries:\n%s", sent)
 	}
-	if !strings.Contains(string(sent), compactedTopicFourID) {
+	if !strings.Contains(string(sent), "Topic four") {
 		t.Fatalf("the categorizer was not shown the live entries:\n%s", sent)
 	}
 	data, _ := os.ReadFile(cats)

@@ -1,4 +1,9 @@
 // Package opencode adapts the JSON produced by `opencode session export`.
+//
+// A compacted export keeps every message; a "compaction" item marks where the
+// model's view restarts. Its summary and recent fields are what the model sees
+// in place of everything before it. So, like the Claude Code adapter, the
+// entries are the last compaction item (as a summary) and what follows it.
 package opencode
 
 import (
@@ -51,6 +56,8 @@ type message struct {
 	Type        string `json:"type"`
 	Text        string `json:"text"`
 	Description string `json:"description"`
+	Summary     string `json:"summary"`
+	Recent      string `json:"recent"`
 	Content     []struct {
 		Type  string          `json:"type"`
 		Text  string          `json:"text"`
@@ -76,11 +83,31 @@ func (a *Adapter) Parse(data []byte) (*session.Document, error) {
 	}
 
 	doc := &session.Document{Source: a.Name(), Format: session.FormatJSON, Top: top, EntriesKey: "messages"}
-	for _, raw := range arr {
-		var m message
-		_ = json.Unmarshal(raw, &m)
+	msgs := make([]message, len(arr))
+	last := -1
+	for i, raw := range arr {
+		_ = json.Unmarshal(raw, &msgs[i])
+		if msgs[i].Type == "compaction" {
+			last = i
+		}
+	}
+	for i, raw := range arr {
+		m := msgs[i]
 		item := session.RawItem{Raw: raw, EntryIndex: -1}
-		if isEntry(m.Type) {
+		switch {
+		case i < last:
+			// Compacted away: kept verbatim on write, never an entry.
+			if isEntry(m.Type) {
+				doc.Compacted++
+			}
+		case i == last:
+			// The last compaction is what the model sees in place of everything
+			// before it: the summary, then the verbatim tail OpenCode kept.
+			e := &session.Entry{ID: m.ID, Role: "system", Kind: session.KindSummary, Raw: raw,
+				Text: strings.TrimSpace(m.Summary + "\n" + m.Recent)}
+			doc.Add(e)
+			item.EntryIndex = e.Index
+		case isEntry(m.Type):
 			e := &session.Entry{ID: m.ID, Role: m.Type, Raw: raw}
 			e.Text, e.Kind, e.CallIDs, e.ResultIDs = extract(m)
 			doc.Add(e)

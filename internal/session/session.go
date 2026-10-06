@@ -105,6 +105,10 @@ type Document struct {
 	Format  Format
 	Entries []*Entry
 
+	// Compacted counts conversation entries before the last compaction: kept
+	// verbatim on write, but no longer seen by the model, so never an Entry.
+	Compacted int
+
 	// JSON source (FormatJSON).
 	Top        map[string]json.RawMessage
 	EntriesKey string

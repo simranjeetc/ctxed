@@ -32,11 +32,9 @@ R1–R4). Compaction satisfies it.
   buckets to keep and the buckets to drop by label. The user pastes it after
   `/compact ` in the live session. It is offline and deterministic: it reads the
   categories file, calls no model, rewrites no transcript, and touches no file.
-- **D3b (spec only, not built).** A Claude Code mod that registers the
-  `session.compact` hook, classifies the live message list into the buckets,
-  drops the selected ones, and returns the kept list (optionally summarising
-  through `next`). Exact, live, history-rewriting; early-access API. Left as
-  tasks in this change.
+- **D3b dropped.** An exact-drop mod on the `session.compact` hook was
+  specified and then dropped (2026-10-06): the `/compact` instruction is the
+  Claude Code path, checked by a codeword test.
 - **Documentation.** README usage and `docs/adapters.md` describe the flow:
   `categorize` → pick buckets → `ctxed compact-instruction …` →
   `/compact <text>`.
@@ -53,15 +51,12 @@ violating R2 (decisions D4).
   `/compact` instruction from a category selection, naming the kept and dropped
   buckets by label.
 - `claude-code-live-prune`: the Claude Code live-prune flow — category-level,
-  in-session, no relaunch — through the `/compact` instruction now and the
-  `session.compact` mod later.
+  in-session, no relaunch — through the `/compact` instruction.
 
 ## Impact
 
 - New: `internal/compact/` (Go, unit-tested) and the `compact-instruction`
   subcommand wired into `internal/cli`.
 - Docs: README usage and harness flow; `docs/adapters.md` Claude Code note.
-- D3b would add a Claude Code mod (TypeScript, early-access mod API) under a new
-  directory; this change only records its tasks.
 - No change to existing ctxed commands, adapters, or stored sessions. The
   command writes nothing and drops nothing.
