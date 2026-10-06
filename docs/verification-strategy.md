@@ -18,15 +18,14 @@ pre-filter, not the gate.
 
 ## Two verification agents, one per harness
 
-The two harnesses need different prerequisites, models, and branches, and an
-incident in one must not touch the other. So there are **two independent
+The two harnesses need different prerequisites and models, and an incident in
+one must not touch the other. So there are **two independent
 verifiers**, each owning one harness and runnable in parallel.
 
 | | OpenCode verifier | Claude Code verifier |
 | --- | --- | --- |
 | Entry point | `scripts/verify-functionally.sh --opencode` | `scripts/verify-functionally.sh --claude` |
 | Harness | `opencode` (OpenCode Go entitled) | `claude` (Haiku) |
-| Branch with the feature | `feat/opencode-dispatch-plugin` | `feat/claude-code-live-prune` |
 | Default model | `opencode-go/deepseek-v4-flash` | `haiku` |
 | Report | `--report <path>` writes JSON | `--report <path>` writes JSON |
 
@@ -52,14 +51,26 @@ The coordinator (main session) does three things and nothing more:
    - **the buckets are visible in the session** — asserted on the session's
      messages, not the server log. A command's `console.log` lands in the server
      log, so asserting there passes even when the user sees nothing;
-   - the selected bucket's messages are absent from the request;
-   - a message added **after** selection, in a dropped bucket, is also absent
-     (anti-drift);
+   - the selected bucket's messages are absent from the request (by id, from
+     the plugin's dispatch log);
+   - the message carrying a file attachment is in the dropped bucket and absent
+     from the request;
+   - a message added **after** the selection is kept, even on the dropped
+     topic, while the selected messages stay dropped in the same dispatch (by
+     id). A selection covers only the messages it was made over;
    - stored history is unchanged and the session continues;
    - **id parity** — the ids ctxed categorizes over are the ids the hook filters.
      If this fails, the plugin must match on content/tool-id — the top risk.
-5. The categorizer stub sleeps ~3 s, like a real model, so the plugin's command
+5. **Negative control** — the exact-drop check runs again against the same
+   dispatch with no selection applied (the transcript the hook received) and
+   must fail there. A check that cannot fail is not a check.
+6. Model-recall questions ("what was in the attached file?", "what is the code
+   word?") are **soft** (see Reports). Each uses its own `NONE-<n>` token and
+   reads only the reply to that question.
+7. The categorizer stub sleeps ~3 s, like a real model, so the plugin's command
    timeout is genuinely exercised.
+8. Every turn waits for the session to go idle (OpenCode's active-session and
+   inbox state), with a hard timeout that names the step. No fixed sleeps.
 
 ### OpenCode self-configuration — `--opencode` (second scenario)
 
@@ -69,6 +80,12 @@ minimal PATH, and a local plugin cannot take options from `opencode.json`. The
 plugin must resolve `ctxed` and a categorizer on its own, and its output must be
 visible in the session. Without this scenario a plugin that only works when the
 test supplies its configuration passes while the real install fails.
+
+To make the plugin run this checkout's `ctxed`, the scenario puts a shim for the
+freshly built binary at the first location the plugin searches (`~/go/bin/ctxed`,
+read from `resolveCtxedPath`), moves any existing file aside, and restores it on
+exit, including on failure and Ctrl-C. The shim records each call, so the
+scenario asserts the plugin resolved that path.
 
 ### Claude Code — `scripts/verify-functionally.sh --claude`
 
@@ -86,9 +103,16 @@ Each verifier writes JSON via `--report <path>`:
 
 ```json
 { "suite": "opencode", "model": "opencode-go/deepseek-v4-flash",
-  "passed": 5, "failed": 0, "ok": true,
-  "checks": [ { "status": "pass", "name": "opencode:prune --ids-only", "detail": "" } ] }
+  "passed": 5, "failed": 0, "softPassed": 1, "softFailed": 1, "ok": true,
+  "checks": [ { "status": "pass", "name": "opencode:prune --ids-only", "detail": "" },
+              { "status": "soft-fail", "name": "opencode:post-selection recall", "detail": "reply: …" } ] }
 ```
+
+A check's `status` is `pass` or `fail` (hard: asserted on ids, files, or exit
+codes) or `soft-pass` or `soft-fail` (model-mediated: what a model recalls).
+`passed`/`failed` count hard checks only, and `ok` is `failed == 0`: a soft
+failure never makes a run fail. Read it as a signal next to the hard id-level
+check it accompanies.
 
 The coordinator acts on `ok` and, when false, on the `checks` with `status:
 "fail"`. `--keep` retains scratch sessions and logs for a failing run.
@@ -97,9 +121,10 @@ The coordinator acts on `ok` and, when false, on the `checks` with `status:
 
 Prerequisites, each reported by name if missing:
 
-- `opencode` on `PATH`, authenticated, with an **OpenCode Go** model entitled.
+- `opencode` on `PATH`, authenticated, with an **OpenCode Go** model entitled;
+  `node` and `npm` to bundle the plugin; `lsof`.
 - `claude` on `PATH`, authenticated (or `CLAUDE_CODE_OAUTH_TOKEN`).
-- Go toolchain; the script builds `ctxed` from the checkout.
+- Go toolchain, `python3`, `curl`; the script builds `ctxed` from the checkout.
 
 Configuration (optional, with defaults):
 
@@ -107,17 +132,23 @@ Configuration (optional, with defaults):
 CTXED_TEST_OPENCODE_MODEL=opencode-go/deepseek-v4-flash
 CTXED_TEST_CLAUDE_MODEL=haiku
 CTXED_TEST_KEEP=1        # keep scratch on failure
+CTXED_TEST_EXTRA_PATH=   # prepended to PATH, for tools installed off-PATH
 ```
 
-Isolation: scratch sessions are created in a temp dir and deleted afterwards
-(OpenCode: `opencode session delete`; Claude Code: a throwaway session id under
-the real config dir, since credentials live there). Nothing stored is mutated by
-ctxed; the only harness-side mutation is Claude Code's own compaction, which is
-the feature under test.
+Nothing machine-specific is assumed: no hardcoded install paths, and no default
+credentials. The OpenCode scenarios start their own scratch server and give it a
+random password per run.
 
-If a checkout lacks the feature (e.g. `compact-instruction` on `main`), the
-scenario auto-runs against the sibling worktree when present, else reports SKIP —
-so the suite never gives a false failure.
+Isolation: every session a scenario creates is deleted afterwards (OpenCode:
+the scratch server's sessions and the `opencode run` session; Claude Code: the
+throwaway session's project directory under `~/.claude/projects`, unless
+`--keep` and a failure). Nothing stored is mutated by ctxed; the only
+harness-side mutations are Claude Code's own compaction, which is the feature
+under test, and the self-config shim described above, which is restored on exit.
+
+A scenario exercises only the checkout it runs from. **An absent feature fails**:
+no check probes for a feature and skips, and nothing falls back to another
+worktree or branch. A branch that genuinely lacks a feature edits the check.
 
 ## Repeatability across changes
 

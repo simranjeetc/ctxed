@@ -72,3 +72,47 @@ or fail naming the location it actually used.
 - Adding new scenarios beyond fixing existing ones.
 - Changing product behavior.
 - Wire-level request capture (separate change).
+
+## Implementation Notes
+
+Recorded while applying the change (2026-10-06).
+
+- **The offline checks were vacuous twice over.** `testdata/*.categorize.json`
+  are categorizer responses (`ids`, no bucket `id`), not categories files, so
+  `--categories N` never resolved; and the feature probes skipped inside the
+  check's subshell, so the skip was lost and the check returned 0. The checks
+  now build a real categories file with `categorize --categorizer-cmd 'cat
+  <fixture>'` and compare exact golden output.
+- **Negative control uses the hook's `before` list.** The plugin logs a dispatch
+  decision only while a selection is recorded, so there is no "no selection"
+  dispatch to read. Each log line carries `before` (the transcript the hook
+  received, which is exactly what goes out with no selection) beside `after`.
+  The control runs the same exact-drop check against `before` of the same
+  dispatch and requires it to fail. It needs no extra model turn
+  and no product change.
+- **Anti-drift was never implemented, and is now dropped.** The fixed
+  id-level check showed that a post-selection message on a dropped topic is
+  sent, and the model recalled its code word. Decided (user, 2026-10-06): a
+  selection covers only the messages it was made over; later messages are kept.
+  The plugin's spec (`add-opencode-dispatch-plugin`) now says so. The check is
+  reversed: in one dispatch, the post-selection message is present and every
+  selected message is still absent. The recall question is soft and now
+  expects the code word.
+- **Self-config installs a shim, not a copy.** The file at the plugin's first
+  search location is a two-line script that appends its path to a log and
+  `exec`s the freshly built binary. The plugin still runs only this checkout's
+  ctxed, and the log is the evidence that the plugin resolved that path, with
+  no plugin change. The location is read from `resolveCtxedPath` in
+  `plugin/opencode/src/core.ts`.
+- **No password default.** The scenarios start their own scratch server, so they
+  generate its password per run; no credential is read or defaulted.
+- **Idle detection.** `GET /api/session/active` (a session absent from it is
+  inactive) plus an empty `GET /api/session/{id}/inbox`, with an unchanged
+  message list across two reads 500 ms apart.
+- **Fixed sleeps were hiding a blocked session.** The plugin's bucket listing is
+  a synthetic message, and OpenCode starts an agent turn on it; the model may
+  call the interactive `question` tool, which waits for a human forever. Under
+  `sleep N` the queued "drain" prompts were never delivered. The scratch
+  project's `opencode.json` now denies `question`. A file read outside the
+  project likewise blocks on a permission prompt, so the file-read turn reads a
+  file inside the scratch project.

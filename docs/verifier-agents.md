@@ -13,19 +13,20 @@ Dispatch one verifier per harness. They are independent and can run in parallel.
 ```
 Goal: functionally verify the OpenCode dispatch prune against a live session.
 
-Run (from the checkout that has the feature, or any checkout — the script finds
-the sibling worktree automatically):
+Run from the checkout under test. The script builds and exercises only that
+checkout; a feature missing from it is a failure, not a skip:
 
     scripts/verify-functionally.sh --opencode --report /tmp/verify-opencode.json
 
 Prerequisites (the script reports any that are missing, by name):
   - `opencode` on PATH, authenticated, with an OpenCode Go model entitled
-  - Go toolchain
+  - node and npm (to bundle the plugin), Go toolchain, python3, curl, lsof
 Model default: opencode-go/deepseek-v4-flash (override: CTXED_TEST_OPENCODE_MODEL)
+Tools off PATH: set CTXED_TEST_EXTRA_PATH.
 
 Then: read /tmp/verify-opencode.json and report `ok`, the model used, and any
-check with status "fail" (name + detail). If a check is "PENDING", say so — it
-means the plugin's in-session command is not built yet (tasks 4.1-4.4).
+check with status "fail" (name + detail). List "soft-fail" checks separately:
+they are model-recall signals and do not affect `ok`.
 
 Do not modify repo files. Do not merge branches. On failure, re-run with
 CTXED_TEST_KEEP=1 and report the kept scratch paths.
@@ -45,8 +46,9 @@ Run:
 
 Prerequisites (reported by name if missing):
   - `claude` on PATH, authenticated (or CLAUDE_CODE_OAUTH_TOKEN)
-  - Go toolchain
+  - Go toolchain, python3, curl
 Model default: haiku (override: CTXED_TEST_CLAUDE_MODEL)
+Tools off PATH: set CTXED_TEST_EXTRA_PATH.
 
 Then: read /tmp/verify-claude.json and report `ok`, the model used, and any
 check with status "fail" (name + detail).

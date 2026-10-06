@@ -3,7 +3,7 @@
 #
 # Usage:
 #   scripts/verify.sh                 # offline checks: build, unit tests, vet, openspec, plugin
-#   scripts/verify.sh --workspaces    # the above, run in every git worktree under ~/codebase/ctxed*
+#   scripts/verify.sh --workspaces    # the above, run in every worktree of this repository
 #   scripts/verify.sh --live          # add the live, opt-in checks (Claude Code / OpenCode)
 #   scripts/verify.sh --all           # offline + live
 #   scripts/verify.sh --claude        # live Claude Code checks only
@@ -11,11 +11,18 @@
 #
 # Exit code is 0 only when every selected check passed. Each check is one
 # function and prints `ok`/`FAIL`/`SKIP`; add new checks by adding a function
-# and calling it from the relevant group below.
+# and calling it from the relevant group below. A check guards a shipped
+# feature: when the feature is absent the check FAILS, it never skips.
 #
 # Design: offline checks never touch the network, the model, or a real session,
 # so they run on every change and in CI. Live checks shell out to a real harness
-# and are opt-in. Nothing here rewrites a session or mutates the repo.
+# and are opt-in. Nothing here rewrites a session or mutates the repo. The live
+# Claude Code check creates one throwaway session and deletes its project
+# directory afterwards.
+#
+# Configuration (optional):
+#   CTXED_TEST_EXTRA_PATH    prepended to PATH, for tools installed off-PATH
+#   CTXED_TEST_CLAUDE_MODEL  model for the live Claude Code check (default haiku)
 
 set -uo pipefail
 
@@ -26,8 +33,8 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# openspec and node live here but are often absent from PATH.
-export PATH="/opt/homebrew/bin:$PATH"
+[[ -n "${CTXED_TEST_EXTRA_PATH:-}" ]] && export PATH="$CTXED_TEST_EXTRA_PATH:$PATH"
+CLAUDE_MODEL="${CTXED_TEST_CLAUDE_MODEL:-haiku}"
 
 BIN=""
 CMD_GROUP="offline"
@@ -52,27 +59,35 @@ for arg in "$@"; do
   esac
 done
 
+# A check runs in a subshell, so it cannot touch the counters itself; its exit
+# status says what happened: 0 pass, 77 skip, anything else fail.
 run() {
   local name="$1"; shift
-  local out
-  if out="$("$@" 2>&1)"; then
-    PASSES=$((PASSES + 1))
-    printf 'ok   %s\n' "$name"
-  else
-    local rc=$?
-    # `skip` may run inside a check; it is not a failure.
-    if [[ $rc -eq 77 || $rc -eq 0 ]]; then
-      printf 'ok   %s\n' "$name"
+  local out rc=0
+  out="$("$@" 2>&1)" || rc=$?
+  case "$rc" in
+    0)
       PASSES=$((PASSES + 1))
-      return 0
-    fi
-    FAILURES=$((FAILURES + 1))
-    printf 'FAIL %s\n' "$name"
-    printf '%s\n' "$out" | sed 's/^/     | /'
-  fi
+      printf 'ok   %s\n' "$name"
+      ;;
+    77)
+      SKIPS=$((SKIPS + 1))
+      printf 'SKIP %s (%s)\n' "$name" "$(tail -1 <<<"$out")"
+      ;;
+    *)
+      FAILURES=$((FAILURES + 1))
+      printf 'FAIL %s\n' "$name"
+      printf '%s\n' "$out" | sed 's/^/     | /'
+      ;;
+  esac
 }
 
-skip() { SKIPS=$((SKIPS + 1)); printf 'SKIP %s (%s)\n' "$1" "$2"; }
+# skip <reason> — inside a check, as `skip "why"; return`. Never use it for an
+# absent feature: that is a failure.
+skip() { printf '%s\n' "$1"; return 77; }
+
+# need <tool> <what> — inside a check, as `need x "why" || return 1`.
+need() { command -v "$1" >/dev/null 2>&1 || { echo "missing prerequisite: $1 ($2)"; return 1; }; }
 
 note() { printf '\n--- %s\n' "$1"; }
 
@@ -82,15 +97,26 @@ build_binary() {
   go build -o "$BIN" ./cmd/ctxed
 }
 
+# categories_file <transcript> <model-response> — prints the path of a real
+# categories file (numbered buckets) built from a canned categorizer response.
+# The fixtures under testdata/ are model responses, not categories files, so a
+# selection like `--categories 2` resolves only after this step.
+categories_file() {
+  local out="$ROOT/.verify/$(basename "$1").categories.json"
+  "$BIN" categorize "$1" --categorizer-cmd "cat $2" --out "$out" >/dev/null || return 1
+  printf '%s\n' "$out"
+}
+
 # ---------------------------------------------------------------------------
 # Offline checks (run on every change)
 # ---------------------------------------------------------------------------
 
-check_go_build()      { build_binary; }
+check_go_build()      { need go "Go toolchain" || return 1; build_binary; }
 check_go_vet()        { go vet ./...; }
 check_go_test()       { go clean -testcache && go test ./...; }
 check_tokenizer_real() { CTXED_TEST_TIKTOKEN=1 go test ./internal/tokenize/; }
 check_openspec() {
+  need openspec "OpenSpec CLI" || return 1
   # Validate every change directory. Archived changes live under changes/archive.
   local d ok=1
   for d in openspec/changes/*/; do
@@ -125,56 +151,46 @@ check_cli_drop() {
 
 check_cli_prune_ids_only() {
   build_binary || return 1
-  if ! "$BIN" prune testdata/claude_session.jsonl --ids-only 2>&1 | grep -q 'ids-only'; then
-    skip "cli:prune --ids-only" "not on this branch (feat/opencode-dispatch-plugin)"
-    return 0
-  fi
-  local got
-  got="$("$BIN" prune testdata/claude_session.jsonl \
-        --categories-file testdata/claude_session.categorize.json \
-        --categories 2 --ids-only)"
-  [[ "$got" == *'"droppedIds"'* ]]
+  local cats got
+  cats="$(categories_file testdata/claude_session.jsonl testdata/claude_session.categorize.json)" || return 1
+  got="$("$BIN" prune testdata/claude_session.jsonl --categories-file "$cats" --categories 2 --ids-only)" || return 1
+  local want='{"droppedIds":["c3990fee-117c-4879-90e0-158f2245a45e"],"droppedToolCallIds":["toolu_01JCsQr3BcKZ7jWo2ERi6wH6"]}'
+  [[ "$got" == "$want" ]] || { printf 'want: %s\ngot:  %s\n' "$want" "$got"; return 1; }
 }
 
 check_cli_prune_empty_selection() {
   build_binary || return 1
-  if ! "$BIN" prune testdata/claude_session.jsonl --ids-only 2>&1 | grep -q 'ids-only'; then
-    skip "cli:prune empty" "not on this branch (feat/opencode-dispatch-plugin)"
-    return 0
-  fi
-  local got
-  got="$("$BIN" prune testdata/claude_session.jsonl --ids '' --ids-only)"
-  [[ "$got" == *'"droppedIds":[]'* ]]
+  local got want='{"droppedIds":[],"droppedToolCallIds":[]}'
+  got="$("$BIN" prune testdata/claude_session.jsonl --ids '' --ids-only)" || return 1
+  [[ "$got" == "$want" ]] || { printf 'want: %s\ngot:  %s\n' "$want" "$got"; return 1; }
 }
 
 check_cli_compact_instruction() {
   build_binary || return 1
-  # Only present on branches that added the command; skip cleanly if absent.
-  if ! "$BIN" compact-instruction 2>&1 | grep -q 'compact-instruction'; then
-    return 0
-  fi
-  local got
+  local cats got
+  cats="$(categories_file testdata/claude_session.jsonl testdata/claude_session.categorize.json)" || return 1
+  # stdout is exactly the sentence to paste after `/compact `; the caveat note
+  # goes to stderr.
   got="$("$BIN" compact-instruction testdata/claude_session.jsonl \
-        --categories-file testdata/claude_session.categorize.json --categories 2)"
-  [[ "$got" == *'keep'*L* ]] || [[ "$got" == *'drop'* ]]
+        --categories-file "$cats" --categories 2 2>/dev/null)" || return 1
+  local want='When you compact this session, keep the context about Adapter investigation, and drop the context about Tool output.'
+  [[ "$(wc -l <<<"$got" | tr -d ' ')" == 1 ]] || { echo "stdout is not one line:"; printf '%s\n' "$got"; return 1; }
+  [[ "$got" == "$want" ]] || { printf 'want: %s\ngot:  %s\n' "$want" "$got"; return 1; }
 }
 
 check_cli_unknown_id_refused() {
   build_binary || return 1
-  # An unknown category id must be refused (exit 3), never silently dropped.
-  # Skip on branches where the categories file/selection route is absent.
-  local rc=0
-  "$BIN" prune testdata/claude_session.jsonl \
-      --categories-file testdata/claude_session.categorize.json \
-      --categories 99 --ids-only >/dev/null 2>&1 || rc=$?
-  if [[ "$rc" -ne 3 ]]; then
-    # Also exercise the transcript (non-ids-only) path, which every branch has.
-    local rc2=0
-    "$BIN" prune testdata/claude_session.jsonl \
-        --categories-file testdata/claude_session.categorize.json \
-        --categories 99 >/dev/null 2>&1 || rc2=$?
-    [[ "$rc2" -eq 3 ]] || return 1
-  fi
+  # An unknown category id must be refused (exit 3), never silently dropped, on
+  # both the id-only and the transcript path. The categories file is valid, so
+  # the refusal is about the id and nothing else.
+  local cats rc
+  cats="$(categories_file testdata/claude_session.jsonl testdata/claude_session.categorize.json)" || return 1
+  rc=0
+  "$BIN" prune testdata/claude_session.jsonl --categories-file "$cats" --categories 99 --ids-only >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 3 ]] || { echo "--ids-only: want exit 3, got $rc"; return 1; }
+  rc=0
+  "$BIN" prune testdata/claude_session.jsonl --categories-file "$cats" --categories 99 >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -eq 3 ]] || { echo "transcript: want exit 3, got $rc"; return 1; }
 }
 
 check_offline_purity() {
@@ -194,17 +210,16 @@ check_offline_purity() {
 
 check_plugin_opencode_tests() {
   local dir="plugin/opencode"
-  if [[ ! -d "$dir" ]]; then
-    skip "plugin:opencode:node-test" "no plugin/opencode on this branch"
-    return 0
-  fi
+  need node "Node.js" || return 1
+  need npm "npm" || return 1
+  [[ -d "$dir" ]] || { echo "missing $dir"; return 1; }
   [[ -d "$dir/node_modules" ]] || ( cd "$dir" && npm install --silent --no-audit --no-fund ) >/dev/null 2>&1 || true
   ( cd "$dir" && node --test test/ )
 }
 
 check_plugin_opencode_no_policy() {
   local f="plugin/opencode/src/core.ts"
-  [[ -f "$f" ]] || { skip "plugin:opencode:no-policy" "not on this branch"; return 0; }
+  [[ -f "$f" ]] || { echo "missing $f"; return 1; }
   # The plugin must carry no prune policy: it runs ctxed, presents the buckets
   # ctxed returned, and filters by id. It may not decide bucket membership or
   # resolve a selection itself. The precise guard is the plugin's own
@@ -217,23 +232,61 @@ check_plugin_opencode_no_policy() {
 # ---------------------------------------------------------------------------
 
 # Claude Code: prove the offline half end-to-end against a real transcript, and
-# print the exact in-session step. Never writes a session.
+# print the exact in-session step. The transcript comes from a throwaway session
+# this check creates (never an arbitrary one already on disk), and the project
+# directory Claude Code made for it is deleted afterwards.
 check_live_claude_cli() {
+  need claude "Claude Code CLI, authenticated" || return 1
+  need python3 "Python 3" || return 1
   build_binary || return 1
-  local transcript="${CTXED_CC_TRANSCRIPT:-}"
-  if [[ -z "$transcript" ]]; then
-    transcript="$(find "${HOME}/.claude/projects" -name '*.jsonl' -type f 2>/dev/null | head -1)"
+  local tmp project sid rc=0
+  tmp="$(mktemp -d)"
+  project="$(claude_project_dir "$tmp")"
+  [[ -e "$project" ]] && { echo "$project already exists; refusing to reuse it"; rm -rf "$tmp"; return 1; }
+  sid="$(cd "$tmp" && claude -p --model "$CLAUDE_MODEL" --output-format json 'Reply with only: ok' 2>/dev/null \
+        | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("session_id",""))
+except Exception: print("")')"
+  if [[ -n "$sid" ]]; then
+    live_claude_cli_steps "$project/$sid.jsonl" || rc=$?
+  else
+    echo "claude -p in $tmp returned no session id"; rc=1
   fi
-  [[ -n "$transcript" && -f "$transcript" ]] || return 1
+  rm -rf "$project" "$tmp"
+  return "$rc"
+}
 
+live_claude_cli_steps() {
+  local transcript="$1"
+  [[ -f "$transcript" ]] || { echo "no transcript at $transcript"; return 1; }
   "$BIN" inspect "$transcript" | grep -q '^TOTAL' || return 1
-
   local tmp; tmp="$(mktemp -d)"
-  # Deterministic, offline categorize via the override command.
-  "$BIN" categorize "$transcript" \
-      --categorizer-cmd "sh -c 'cat >/dev/null; echo \"{\\\"categories\\\":[{\\\"label\\\":\\\"all\\\",\\\"ids\\\":[]}]}\"'" \
-      --out "$tmp/cat.json" >/dev/null 2>&1 || return 1
-  [[ -s "$tmp/cat.json" ]]
+  # Deterministic, offline categorize: a canned response that splits the
+  # transcript's real entry ids into two buckets (ctxed requires at least two).
+  python3 - "$transcript" "$tmp/response.json" <<'PY2'
+import json, sys
+ids = []
+for line in open(sys.argv[1]):
+    try: o = json.loads(line)
+    except Exception: continue
+    if o.get("type") in ("user", "assistant") and o.get("uuid"):
+        ids.append(o["uuid"])
+half = max(1, len(ids) // 2)
+json.dump({"categories": [{"label": "first", "ids": ids[:half]}, {"label": "second", "ids": ids[half:]}]},
+          open(sys.argv[2], "w"))
+PY2
+  "$BIN" categorize "$transcript" --categorizer-cmd "cat $tmp/response.json" --out "$tmp/cat.json" \
+      || { rm -rf "$tmp"; return 1; }
+  [[ -s "$tmp/cat.json" ]]; local rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+# claude_project_dir <dir> — the directory Claude Code keeps sessions started in
+# <dir> under: its real path with every non-alphanumeric character replaced.
+claude_project_dir() {
+  local real; real="$(cd "$1" && pwd -P)"
+  printf '%s/.claude/projects/%s\n' "$HOME" "${real//[^a-zA-Z0-9]/-}"
 }
 
 check_live_claude_resume_hint() {
@@ -255,12 +308,15 @@ EOF
 # can, then print what a human must do to close task 3.1.
 check_live_opencode_pieces() {
   local dir="plugin/opencode"
-  [[ -d "$dir" ]] || { skip "live:opencode" "no plugin on this branch"; return 0; }
+  need node "Node.js" || return 1
+  [[ -d "$dir" ]] || { echo "missing $dir"; return 1; }
+  build_binary || return 1
   ( cd "$dir" && node --test test/ ) || return 1
   # The id-only output must be a single-line JSON object.
-  "$BIN" prune testdata/opencode_session.json \
-      --categories-file testdata/opencode_session.categorize.json \
-      --categories 1 --ids-only | grep -q '^{"droppedIds"'
+  local cats got
+  cats="$(categories_file testdata/opencode_session.json testdata/opencode_session.categorize.json)" || return 1
+  got="$("$BIN" prune testdata/opencode_session.json --categories-file "$cats" --categories 1 --ids-only)" || return 1
+  [[ "$(wc -l <<<"$got" | tr -d ' ')" == 1 && "$got" == '{"droppedIds":['* ]] || { echo "got: $got"; return 1; }
 }
 
 check_live_opencode_dispatch_hint() {
@@ -324,13 +380,12 @@ run_here() {
 # ---------------------------------------------------------------------------
 
 if [[ $RUN_WORKSPACES -eq 1 ]]; then
-  for wt in "$HOME"/codebase/ctxed "$HOME"/codebase/ctxed-*; do
-    [[ -e "$wt/.git" ]] || continue
+  while IFS= read -r wt; do
     [[ -f "$wt/scripts/verify.sh" ]] || continue
     ( cd "$wt" && bash scripts/verify.sh $([[ $RUN_LIVE -eq 1 ]] && echo --live) )
     rc=$?
     [[ $rc -eq 0 ]] || FAILURES=$((FAILURES + 1))
-  done
+  done < <(git worktree list --porcelain | sed -n 's/^worktree //p')
 else
   run_here "verify"
 fi
