@@ -42,8 +42,14 @@ type File struct {
 	Uncategorized []string   `json:"uncategorized,omitempty"`
 }
 
-// Prompt builds the categorization prompt for a session.
-func Prompt(doc *session.Document, max int) string {
+// Prompt builds the categorization prompt for a session. The prompt is bounded
+// by maxBytes, because a prompt proportional to a long session is slow (tens of
+// seconds) and the model stops following the instruction. Two bounds apply: at
+// most maxEntries entries are listed, sampled evenly so the whole session is
+// represented, and the per-entry snippet is shortened to fit the remaining
+// budget. Entries left out are reported as uncategorized by Parse; naming the
+// session's topics needs a representative view, not every entry.
+func Prompt(doc *session.Document, max int, maxBytes int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are given the entries of a working session, oldest first.\n")
 	fmt.Fprintf(&b, "Group them into between 2 and %d high-level categories that describe what the session is about\n", max)
@@ -51,10 +57,80 @@ func Prompt(doc *session.Document, max int) string {
 	fmt.Fprintf(&b, "Use each entry id exactly as given. Assign every entry to exactly one category.\n")
 	fmt.Fprintf(&b, "Return only JSON, no prose:\n")
 	fmt.Fprintf(&b, `{"categories":[{"label":"...","ids":["...","..."]}]}`+"\n\nEntries:\n")
-	for _, e := range doc.Entries {
-		fmt.Fprintf(&b, "- id=%s role=%s kind=%s: %s\n", e.ID, e.Role, e.Kind, snippet(e.Text, 300))
+	header := b.String()
+
+	if len(doc.Entries) == 0 {
+		return header
+	}
+
+	const (
+		maxEntries = 250
+		maxSnippet = 300
+		minSnippet = 24
+	)
+
+	entries := doc.Entries
+	if len(entries) > maxEntries {
+		entries = sampleEntries(entries, maxEntries)
+	}
+
+	budget := maxBytes - len(header)
+	if budget < 0 {
+		budget = 0
+	}
+
+	// The largest snippet length at which the chosen entries fit the budget.
+	snippetLen := minSnippet
+	lo, hi := minSnippet, maxSnippet
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		if promptFits(entries, budget, mid) {
+			snippetLen = mid
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+
+	for _, e := range entries {
+		fmt.Fprintf(&b, "- id=%s role=%s kind=%s: %s\n", e.ID, e.Role, e.Kind, snippet(e.Text, snippetLen))
 	}
 	return b.String()
+}
+
+// entryLineLen is the rendered size of one entry line at a snippet length. The
+// estimate is deliberately conservative: it assumes the snippet is truncated and
+// carries the "…" marker, so the fitted prompt stays within budget.
+func entryLineLen(e *session.Entry, snippetLen int) int {
+	// "- id=" (5) + id + " role=" (6) + role + " kind=" (6) + kind + ": " (2)
+	// + snippet + "…" (3) + "\n" (1)
+	const fixed = 23
+	return len(e.ID) + len(e.Role) + len(e.Kind) + snippetLen + fixed
+}
+
+func promptFits(entries []*session.Entry, budget, snippetLen int) bool {
+	total := 0
+	for _, e := range entries {
+		total += entryLineLen(e, snippetLen)
+		if total > budget {
+			return false
+		}
+	}
+	return true
+}
+
+// sampleEntries picks up to n entries spread evenly across the slice, so a
+// sampled view represents the whole session rather than only its head.
+func sampleEntries(entries []*session.Entry, n int) []*session.Entry {
+	if n >= len(entries) {
+		return entries
+	}
+	out := make([]*session.Entry, 0, n)
+	for i := 0; i < n; i++ {
+		idx := i * (len(entries) - 1) / (n - 1)
+		out = append(out, entries[idx])
+	}
+	return out
 }
 
 type modelResponse struct {

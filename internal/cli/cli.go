@@ -274,7 +274,7 @@ func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	cmd := fs.String("categorizer-cmd", "", "shell command returning the model response")
 	maxCats := fs.Int("max-categories", categorize.DefaultMaxCategories, "maximum number of categories")
 	out := fs.String("out", "", "categories file path")
-	maxInput := fs.Int("max-input-bytes", 400000, "maximum prompt size in bytes")
+	maxInput := fs.Int("max-input-bytes", 30000, "target prompt size in bytes; the prompt is sampled and shortened to fit")
 
 	flags, rest := splitArgs(args, valueFlagsCategorize)
 	if err := fs.Parse(flags); err != nil {
@@ -312,8 +312,9 @@ func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return fail(stderr, err)
 	}
 
-	prompt := categorize.Prompt(doc, *maxCats)
+	prompt := categorize.Prompt(doc, *maxCats, *maxInput)
 	if len(prompt) > *maxInput {
+		// Prompt is bounded by construction; this is a safety net only.
 		fmt.Fprintf(stderr, "ctxed categorize: prompt is %d bytes; the limit is %d\n", len(prompt), *maxInput)
 		return ExitError
 	}

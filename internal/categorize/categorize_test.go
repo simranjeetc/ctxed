@@ -34,11 +34,34 @@ func loadDoc(t *testing.T) *session.Document {
 
 func TestPromptListsEntryIDs(t *testing.T) {
 	doc := loadDoc(t)
-	p := categorize.Prompt(doc, 5)
+	p := categorize.Prompt(doc, 5, 30000)
 	for _, e := range doc.Entries {
 		if !strings.Contains(p, e.ID) {
 			t.Fatalf("prompt missing id %q", e.ID)
 		}
+	}
+}
+
+func TestPromptIsBounded(t *testing.T) {
+	// A large session must not produce a prompt proportional to its size. A
+	// multi-hundred-KB prompt makes the model call slow enough to time out — the
+	// failure this bound exists to prevent.
+	doc := loadDoc(t)
+	big := *doc
+	big.Entries = nil
+	for i := 0; i < 2000; i++ {
+		e := doc.Entries[i%len(doc.Entries)]
+		e.ID = "msg_" + strings.Repeat("0", 5) + string(rune('a'+i%26)) + string(rune('a'+(i/26)%26))
+		e.Text = strings.Repeat("realistic session text about one topic. ", 20)
+		big.Entries = append(big.Entries, e)
+	}
+	const budget = 30000
+	p := categorize.Prompt(&big, 5, budget)
+	if len(p) > budget {
+		t.Fatalf("prompt is %d bytes, over the %d budget", len(p), budget)
+	}
+	if !strings.Contains(p, "Entries:") {
+		t.Fatal("prompt lost its header")
 	}
 }
 
