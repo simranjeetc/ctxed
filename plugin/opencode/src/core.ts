@@ -12,6 +12,9 @@
 // bucket means.
 
 import { spawn } from "node:child_process"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 import { transcriptJson, type HookMessage as TranscriptMessage } from "./transcript.ts"
 
@@ -19,6 +22,14 @@ import { transcriptJson, type HookMessage as TranscriptMessage } from "./transcr
 export type LiveMessage = TranscriptMessage
 
 export const DEFAULT_TIMEOUT_MS = 2000
+
+/**
+ * The in-session command categorizes by calling a model, which takes seconds —
+ * far longer than the local id-only prune the dispatch hook runs. Give the
+ * command its own budget so a slow model never fails the fast dispatch path,
+ * and a fast dispatch timeout never truncates the model call.
+ */
+export const DEFAULT_COMMAND_TIMEOUT_MS = 60000
 
 export interface PluginConfig {
   /** True when the plugin is configured enough to run at all. */
@@ -31,6 +42,8 @@ export interface PluginConfig {
   /** Maximum number of buckets to ask ctxed for. */
   maxCategories: string
   timeoutMs: number
+  /** Timeout for the command's model-backed categorize step. */
+  commandTimeoutMs: number
   /** When set, the dispatch hook appends its decision to this file (testing). */
   debugLog: string
 }
@@ -54,6 +67,7 @@ const OPTION_NAMES: Record<keyof Omit<PluginConfig, "enabled">, string> = {
   categorizerModel: "categorizerModel",
   maxCategories: "maxCategories",
   timeoutMs: "timeoutMs",
+  commandTimeoutMs: "commandTimeoutMs",
   debugLog: "debugLog",
 }
 
@@ -63,6 +77,7 @@ const ENV_NAMES: Record<keyof Omit<PluginConfig, "enabled">, string> = {
   categorizerModel: "CTXED_PLUGIN_CATEGORIZER_MODEL",
   maxCategories: "CTXED_PLUGIN_MAX_CATEGORIES",
   timeoutMs: "CTXED_PLUGIN_TIMEOUT_MS",
+  commandTimeoutMs: "CTXED_PLUGIN_COMMAND_TIMEOUT_MS",
   debugLog: "CTXED_PLUGIN_DEBUG_LOG",
 }
 
@@ -97,6 +112,9 @@ export function loadConfig(
   let timeoutMs = Number.parseInt(pick("timeoutMs"), 10)
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = DEFAULT_TIMEOUT_MS
 
+  let commandTimeoutMs = Number.parseInt(pick("commandTimeoutMs"), 10)
+  if (!Number.isFinite(commandTimeoutMs) || commandTimeoutMs <= 0) commandTimeoutMs = DEFAULT_COMMAND_TIMEOUT_MS
+
   return {
     enabled: true,
     ctxedPath,
@@ -104,8 +122,33 @@ export function loadConfig(
     categorizerModel,
     maxCategories,
     timeoutMs,
+    commandTimeoutMs,
     debugLog,
   }
+}
+
+/**
+ * Resolves the ctxed binary to something runnable. A configured absolute path is
+ * kept as-is. A bare name ("ctxed", the default) is resolved against the usual
+ * install locations first, because OpenCode runs its server with a minimal PATH
+ * that omits a user's ~/go/bin or Homebrew bin. Falls back to the bare name for
+ * a normal PATH lookup when no known location exists.
+ */
+export function resolveCtxedPath(configured: string): string {
+  if (configured.includes("/")) return configured
+
+  const home = homedir()
+  const candidates = [
+    join(home, "go", "bin", "ctxed"),
+    "/opt/homebrew/bin/ctxed",
+    "/usr/local/bin/ctxed",
+    join(home, ".local", "bin", "ctxed"),
+    join(home, ".opencode", "bin", "ctxed"),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  return configured
 }
 
 /** Builds the exact ctxed invocation the plugin relies on. */
@@ -301,6 +344,14 @@ export function runCtxed(
 
 export function defaultRunner(config: PluginConfig): Runner {
   return (args, stdin) => runCtxed(args, config.timeoutMs, stdin)
+}
+
+/**
+ * The runner for the in-session command. Same spawn, but on the command's own
+ * (longer) budget, because the categorize step calls a model.
+ */
+export function commandRunner(config: PluginConfig): Runner {
+  return (args, stdin) => runCtxed(args, config.commandTimeoutMs, stdin)
 }
 
 export interface ApplyInput<T extends LiveMessage> {

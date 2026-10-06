@@ -46,6 +46,7 @@ function config(overrides: Partial<PluginConfig> = {}): PluginConfig {
     maxCategories: "",
     debugLog: "",
     timeoutMs: 1000,
+    commandTimeoutMs: 1000,
     ...overrides,
   }
 }

@@ -10,3 +10,6 @@
 .DS_Store
 .verify/
 .archify/
+
+# OpenCode plugin install (deps are regenerable; the bundle is committed)
+.opencode/node_modules/

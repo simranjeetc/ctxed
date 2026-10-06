@@ -11,21 +11,24 @@
 // exec/present/substitute is translating the two live message encodings into
 // ctxed's document shape (see transcript.ts).
 
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { Plugin } from "@opencode/plugin"
 
 import {
   applyPrune,
   categorizeLive,
+  commandRunner,
   defaultRunner,
   formatBuckets,
   loadConfig,
   parseSelection,
   parseSelectionInput,
   PruneCache,
+  resolveCtxedPath,
   selectionKey,
   sessionRevision,
   type LiveMessage,
@@ -39,12 +42,35 @@ export const CtxedPrunePlugin = Plugin.define({
   async setup(ctx) {
     const config = loadConfig(ctx.options as Record<string, unknown>, process.env)
 
+    // Self-configure for a machine where OpenCode's server has a minimal PATH
+    // and no plugin env: resolve the ctxed binary to a real location, and fall
+    // back to the categorizer script shipped beside this plugin.
+    config.ctxedPath = resolveCtxedPath(config.ctxedPath)
+    if (config.categorizerCmd === "" && config.categorizerModel === "") {
+      const bundled = resolveBundledCategorizer()
+      if (bundled !== "") config.categorizerCmd = bundled
+    }
+
     const cache = new PruneCache()
     const run = defaultRunner(config)
+    // The command calls a model to categorize; give it its own longer budget.
+    const runCommand = commandRunner(config)
 
     const report = (message: string, error?: unknown): void => {
       if (error === undefined) console.error(message)
       else console.error(message, error)
+    }
+
+    // A command's execute returns void, so console.log is invisible to the user
+    // — it lands in the server's stdout, not the session. Surface anything the
+    // user must see as a synthetic session message instead. Fall back to the log
+    // if that call fails, so output is never silently lost.
+    const say = async (sessionID: string, text: string): Promise<void> => {
+      try {
+        await ctx.session.synthetic({ sessionID, text })
+      } catch (error) {
+        report(`ctxed-opencode: could not surface output: ${text}`, error)
+      }
     }
 
     // In-session command: `/ctxed-prune` lists buckets; `/ctxed-prune 1,3`
@@ -57,24 +83,26 @@ export const CtxedPrunePlugin = Plugin.define({
         async execute({ sessionID, prompt }) {
           const messages = await sessionMessages(ctx as never, sessionID)
           if (messages.length === 0) {
-            console.log(`No session messages to categorize yet; send a message, then /${COMMAND_NAME}.`)
+            await say(sessionID, `No session messages to categorize yet; send a message, then /${COMMAND_NAME}.`)
             return
           }
 
           const result = await categorizeLive({
             transcript: JSON.stringify(serializeContextMessages(messages)),
             config,
-            run,
+            run: runCommand,
           })
           if (result.error !== undefined) {
-            report(`ctxed-opencode: categorize failed: ${result.error}`)
+            await say(sessionID, `ctxed-opencode: categorize failed: ${result.error}`)
             return
           }
 
           const selected = parseSelectionInput(commandText(prompt))
           if (selected.length === 0) {
-            console.log(formatBuckets(result.buckets))
-            console.log(`Select buckets with /${COMMAND_NAME} <ids> (e.g. /${COMMAND_NAME} 1,3).`)
+            await say(
+              sessionID,
+              `${formatBuckets(result.buckets)}\nSelect buckets with /${COMMAND_NAME} <ids> (e.g. /${COMMAND_NAME} 1,3).`,
+            )
             return
           }
 
@@ -86,7 +114,7 @@ export const CtxedPrunePlugin = Plugin.define({
             selectedAt: new Date().toISOString(),
           })
           cache.clear()
-          console.log(`Selected buckets ${categoryIds}; dropped on every subsequent dispatch.`)
+          await say(sessionID, `Selected buckets ${categoryIds}; dropped on every subsequent dispatch.`)
         },
       })
     })
@@ -135,6 +163,28 @@ function debugDecide(logPath: string, messages: readonly LiveMessage[], result: 
   } catch {
     // A debug log must never break a turn.
   }
+}
+
+/**
+ * The categorizer script that ships beside this plugin. An install at
+ * `<repo>/.opencode/plugins/ctxed-prune.js` finds `<repo>/scripts/…` two levels
+ * up; a copy elsewhere may not, in which case the caller configures one.
+ * Returns "" when no candidate exists, so the caller can fall back to a model.
+ */
+function resolveBundledCategorizer(): string {
+  const candidates = [
+    "../../scripts/ctxed-categorizer-opencode.sh",
+    "../../../scripts/ctxed-categorizer-opencode.sh",
+  ]
+  for (const relative of candidates) {
+    try {
+      const path = fileURLToPath(new URL(relative, import.meta.url))
+      if (existsSync(path)) return path
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return ""
 }
 
 /**

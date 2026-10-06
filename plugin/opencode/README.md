@@ -73,33 +73,29 @@ normal run — check with `--print-logs --log-level debug`.
 
 ## Configure
 
-Configuration is read from plugin options first, then from environment
-variables.
+The plugin works with **no configuration**: it resolves `ctxed` from the usual
+install locations (because OpenCode's server runs with a minimal `PATH`) and
+falls back to the categorizer script shipped beside it. Set the options below
+only to override that.
 
-| Option             | Environment variable              | Meaning                                                          |
-| ------------------ | --------------------------------- | ---------------------------------------------------------------- |
-| `ctxedPath`        | `CTXED_PLUGIN_CTXED_PATH`         | Path to the ctxed binary (default: `ctxed`, resolved on `PATH`). |
-| `categorizerCmd`   | `CTXED_PLUGIN_CATEGORIZER_CMD`    | Command ctxed runs to categorize (prompt on its stdin).          |
-| `categorizerModel` | `CTXED_PLUGIN_CATEGORIZER_MODEL`  | Model name, when the categorizer is a model endpoint.            |
-| `maxCategories`    | `CTXED_PLUGIN_MAX_CATEGORIES`     | Maximum number of buckets to ask ctxed for.                      |
-| `timeoutMs`        | `CTXED_PLUGIN_TIMEOUT_MS`         | Hard timeout per ctxed invocation (default: 2000).               |
-| `debugLog`         | `CTXED_PLUGIN_DEBUG_LOG`          | When set, append each dispatch decision (kept/dropped ids) here. |
+Configuration is read from environment variables (`CTXED_PLUGIN_*`). A local
+plugin in `.opencode/plugins/` cannot take options from `opencode.json` — only
+npm plugins can — so environment variables are the channel.
 
-Plugin options in `opencode.json`:
+| Environment variable                 | Meaning                                                          |
+| ------------------------------------ | ---------------------------------------------------------------- |
+| `CTXED_PLUGIN_CTXED_PATH`            | Path to the ctxed binary (default: resolved from common locations). |
+| `CTXED_PLUGIN_CATEGORIZER_CMD`       | Command ctxed runs to categorize (prompt on its stdin).          |
+| `CTXED_PLUGIN_CATEGORIZER_MODEL`     | Model name, when the categorizer is a model endpoint.            |
+| `CTXED_PLUGIN_MAX_CATEGORIES`        | Maximum number of buckets to ask ctxed for.                      |
+| `CTXED_PLUGIN_TIMEOUT_MS`            | Hard timeout for the dispatch prune (default: 2000).             |
+| `CTXED_PLUGIN_COMMAND_TIMEOUT_MS`    | Timeout for the command's model-backed categorize (default: 60000). |
+| `CTXED_PLUGIN_DEBUG_LOG`             | When set, append each dispatch decision (kept/dropped ids) here. |
 
-```jsonc
-{
-  "plugins": [
-    {
-      "package": "./.opencode/plugins/ctxed-prune.js",
-      "options": {
-        "ctxedPath": "/usr/local/bin/ctxed",
-        "categorizerModel": "opencode-go/deepseek-v4-flash"
-      }
-    }
-  ]
-}
-```
+**Output is a session message.** A command's `execute` returns void, so the
+plugin surfaces the bucket list and the selection confirmation as synthetic
+session messages — they appear in the chat. `console.log` would go to the
+server's stdout, which the user never sees.
 
 ## Develop
 
