@@ -22,9 +22,10 @@ dispatch-time pruning is not expressible there; its live mechanism is compaction
 - The OpenCode plugin gains an **in-session ctxed command**: it categorizes the
   live messages (via ctxed), presents the buckets, and records the user's bucket
   selection. Buckets, not ids, are what the user picks.
-- The dispatch hook applies the recorded selection to **every** dispatch,
-  including messages added after the selection, by re-deriving the dropped set
-  over the live transcript (cached by session revision).
+- The dispatch hook applies the recorded selection to **every** dispatch, by
+  resolving the dropped set over the live transcript (cached by session
+  revision). Messages added after the selection are kept, even on a dropped
+  topic.
 - ctxed gains the inputs this needs: a way to categorize an arbitrary transcript
   and to print the resolved dropped ids (`prune --ids-only`).
 - Configuration: ctxed's location, the categorizer model/transport, and the
@@ -60,5 +61,5 @@ dispatch-time pruning is not expressible there; its live mechanism is compaction
 Functional, against a live OpenCode session (see `scripts/verify-functionally.sh`
 and the strategy in `docs/verification-strategy.md`): create a session, run the
 in-session categorize+select, dispatch, and confirm the dropped bucket is absent
-from the request, a message added after selection in a dropped bucket is also
-absent, and the stored session is unchanged.
+from the request, a message added after the selection is kept, and the stored
+session is unchanged.

@@ -17,7 +17,7 @@ consumes what ctxed returns.
 **Goals:**
 
 - Run the whole workflow — categorize, select, apply — from inside the session.
-- Have a bucket selection cover messages added after it was made.
+- Have a bucket selection stay applied on every later dispatch.
 - Keep the plugin policy-free: exec ctxed, present, substitute.
 - Never let a ctxed problem break a turn (fail-open).
 - Bounded per-dispatch cost.
@@ -28,6 +28,8 @@ consumes what ctxed returns.
   `docs/live-context-prune-decisions.md`).
 - Automatic or budget-triggered pruning. The selection is the user's explicit
   choice.
+- Dropping messages added after the selection, even on a dropped topic
+  (decided 2026-10-06, see D-new-messages).
 - Mutating stored session history.
 - A proxy or request interceptor.
 
@@ -53,6 +55,22 @@ the plugin). It categorizes the **live** messages and presents the buckets.
 - Alternative considered: keep `categorize` as a prerequisite the user runs
   outside, on an export. Rejected — it drifts: messages added after the export
   are never covered by the selection.
+
+### D-new-messages: A selection covers only the messages it was made over
+
+Decided 2026-10-06. The selection drops the messages that were in the selected
+buckets when it was made. A message added later is kept, even when it is about
+a dropped topic.
+
+- Why: dropping later messages means deciding each new message's topic, which
+  is a model call on every turn. Worse, it hides from the model what the user
+  just wrote, silently, whenever they return to a topic on purpose. A user who
+  wants the new messages gone runs `/ctxed-prune` again.
+- What the code does: at each dispatch ctxed resolves the selection from the
+  categories file written at selection time. New messages are in no bucket, so
+  they are kept. This was already the behavior; an earlier draft of this change
+  required the opposite ("anti-drift"), and the verifier check that seemed to
+  confirm it could not fail (see `fix-verification-false-passes`).
 
 ### D3: The plugin delegates to ctxed over a live transcript
 
@@ -162,7 +180,7 @@ full record.
   --opencode`: the command categorizes the live session, a selection is recorded,
   the dropped bucket is absent from the request (the model cannot recall its
   content), the stored session is unchanged, a message added after the selection
-  in a dropped bucket is also absent, and live ids equal the session's ids.
+  is kept, and live ids equal the session's ids.
 - **A bucket spanning many messages is asserted, not assumed.** The scenario
   builds a two-topic session where one topic spans several turns (7-9 entries),
   and checks the plugin's own dispatch decision: every id in the dropped bucket

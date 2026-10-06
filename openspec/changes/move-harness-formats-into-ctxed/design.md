@@ -32,10 +32,11 @@ $XDG_STATE_HOME/ctxed/<harness>/<session-id>/
 Writes are atomic (temp file + rename). The directory is created 0700. ctxed
 still never touches a harness's own store.
 
-Anti-drift is unchanged in substance: at each `prune`, ctxed re-resolves the
-dropped set over the transcript it is given. New messages that arrived after
-categorization are not in any bucket, so they are kept. (Re-bucketing new
-messages is out of scope; see Open Questions.)
+A selection covers only the messages it was made over: at each `prune`, ctxed
+re-resolves the dropped set over the transcript it is given, and new messages
+that arrived after categorization are in no bucket, so they are kept. This is
+decided, not open (2026-10-06; see `add-opencode-dispatch-plugin`, design
+D-new-messages). Preserve it when porting.
 
 ### `serve --stdio`
 
@@ -63,11 +64,10 @@ run (visible message in the session) on mismatch.
 
 ## Open Questions
 
-- Should new post-selection messages be auto-assigned to buckets (so a dropped
-  topic stays dropped as it grows)? The current verifier's "anti-drift" scenario
-  expects a post-selection **alpha** message to be absent; confirm how the
-  current plugin achieves that (re-categorize? label match?) before porting, and
-  preserve that behavior exactly.
+- ~~Should new post-selection messages be auto-assigned to buckets?~~
+  Answered 2026-10-06: no. The plugin never did this (the old verifier check
+  that suggested it could not fail), and the behavior is now decided: new
+  messages are kept. The verifier asserts it.
 - State retention: when is a session's state directory removed? Proposed:
   `ctxed select … --clear`, plus `ctxed state gc --older-than 30d`.
 

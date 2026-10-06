@@ -28,22 +28,29 @@ the user runs in a separate tool on a stale export.
 - **THEN** the plugin records it as the session's active selection
 - **AND** the dispatch hook applies it to subsequent outbound requests
 
-### Requirement: Selection covers messages added after it was made
+### Requirement: Selection covers only the messages it was made over
 
-The plugin SHALL apply the recorded bucket selection to every dispatch,
-including messages that did not exist when the selection was made, so a
-long-running session does not drift out of the selection.
+The plugin SHALL apply the recorded bucket selection to every dispatch, and
+SHALL drop only the messages that were in the selected buckets when the
+selection was made. A message added after the selection SHALL be kept, whatever
+its topic: returning to a dropped topic brings it back, and the user prunes
+again to drop it.
 
-#### Scenario: New message falls in an already-dropped bucket
+#### Scenario: Selected messages stay dropped
+
+- **WHEN** a selection is recorded and later dispatches happen
+- **THEN** every message in the selected buckets is absent from each of them
+
+#### Scenario: New message on a dropped topic
 
 - **WHEN** a message is added after the selection was recorded
-- **AND** that message belongs to a bucket the user chose to drop
-- **THEN** it is absent from the outbound transcript for later dispatches
+- **AND** it is about a topic the user chose to drop
+- **THEN** it remains in the outbound transcript
 
-#### Scenario: New message falls in a kept bucket
+#### Scenario: New message on a kept topic
 
 - **WHEN** a message is added after the selection was recorded
-- **AND** it belongs to a bucket the user kept
+- **AND** it is about a topic the user kept
 - **THEN** it remains in the outbound transcript
 
 ### Requirement: Prune set comes from ctxed

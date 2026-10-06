@@ -2,7 +2,7 @@
 
 ## 1. Live formats
 
-- [ ] 1.1 Answer the design's anti-drift open question by reading `plugin/opencode/src/` and the verifier; record the answer in design.md before coding
+- [x] 1.1 Answer the design's anti-drift open question by reading `plugin/opencode/src/` and the verifier; record the answer in design.md before coding (answered 2026-10-06: new messages are kept)
 - [ ] 1.2 Port `plugin/opencode/src/transcript.ts` to Go adapters `opencode-hook` and `opencode-context`; move its test fixtures to `testdata/live/` and assert identical output
 - [ ] 1.3 Add `claude-mod` adapter (`handle` as id); fixtures from the spike's `SessionMessage` shape
 - [ ] 1.4 `--from` on `categorize -` and `prune -`; usage error on an unknown value

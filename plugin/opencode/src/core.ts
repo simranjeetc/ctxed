@@ -378,9 +378,9 @@ export interface ApplyResult<T extends LiveMessage> {
  * Fail-open: any ctxed failure, timeout, or unparseable output leaves the
  * messages unchanged and reports the error instead of blocking the turn.
  *
- * The selection is re-derived over the **live** transcript every time the
- * revision changes, so a message added after the selection was recorded is
- * covered by it too.
+ * The selection is re-resolved over the **live** transcript every time the
+ * revision changes. It drops only the messages that were in the selected
+ * buckets when it was made; a message added later is in no bucket and is kept.
  */
 export async function applyPrune<T extends LiveMessage>(input: ApplyInput<T>): Promise<ApplyResult<T>> {
   const { messages, config, selection, revision, cache, run, report } = input

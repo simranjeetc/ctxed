@@ -14,7 +14,7 @@
 
 - [ ] 3.1 Scenario project config registers the fake provider; sessions select it
 - [ ] 3.2 Every prompt carries a unique sentinel; helper `wire_after <seq>` returns request bodies after a sequence number
-- [ ] 3.3 Hard checks: dropped sentinels absent and kept sentinels present in the next request; anti-drift (post-selection alpha message absent); attachment content absent; tool result does not accumulate across requests
+- [ ] 3.3 Hard checks: dropped sentinels absent and kept sentinels present in the next request; post-selection message present, even on the dropped topic; attachment content absent; tool result does not accumulate across requests
 - [ ] 3.4 Self-config scenario uses the fake provider too
 - [ ] 3.5 Debug log printed only as diagnostics on failure
 

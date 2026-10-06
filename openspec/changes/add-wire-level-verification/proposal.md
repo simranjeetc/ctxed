@@ -28,7 +28,8 @@ what the model receives") is the outbound request itself.
   the `/compact` request and every following turn are recorded.
 - Assertions move to the wire:
   - OpenCode: every dropped-bucket sentinel is absent from the next request
-    body, every kept sentinel is present, and anti-drift holds on the wire.
+    body, every kept sentinel is present, and a message added after the
+    selection is present on the wire.
   - Claude Code (D3a, best-effort): the compaction request contains the ctxed
     instruction; the first post-compact request no longer contains the
     pre-compact turns verbatim. Whether the dropped topic survives in the

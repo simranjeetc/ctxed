@@ -56,8 +56,9 @@
       observes the outgoing request
 - [x] 4.2 Assert the selected bucket is absent from the request and the stored
       session is unchanged
-- [x] 4.3 Assert a message added after selection in a dropped bucket is also
-      absent (the anti-drift requirement)
+- [x] 4.3 Assert a message added after the selection is kept, even on a
+      dropped topic (revised 2026-10-06; it once required the opposite,
+      "anti-drift")
 - [x] 4.4 Assert live message ids equal the ids ctxed categorizes over (the id
       parity risk); fail loudly if not, and switch to content/tool-id matching.
       Resolved without the fallback: the spike proved live ids equal export ids,
