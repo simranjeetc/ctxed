@@ -394,6 +394,21 @@ function parseSelection(raw) {
 function parseSelectionInput(input) {
   return input.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
 }
+function parseBareSelection(input) {
+  const text = input.trim();
+  if (text === "") return [];
+  if (!/^(?:drop\s+)?\d+(?:[\s,]+\d+)*$/i.test(text)) return [];
+  return parseSelectionInput(text);
+}
+function filterBucketIds(buckets, ids) {
+  return ids.filter((id) => buckets.some((bucket) => String(bucket.id) === id));
+}
+function formatSelectedLabels(buckets, ids) {
+  return ids.map((id) => {
+    const bucket = buckets.find((candidate) => String(candidate.id) === id);
+    return bucket === void 0 ? `bucket ${id}` : `bucket ${id} (${bucket.label})`;
+  }).join(", ");
+}
 
 // src/plugin.ts
 var COMMAND_NAME = "ctxed-prune";
@@ -420,16 +435,64 @@ var CtxedPrunePlugin = Plugin.define({
         report(`ctxed-opencode: could not surface output: ${text}`, error);
       }
     };
+    const pending = /* @__PURE__ */ new Map();
+    const PENDING_TTL_MS = 10 * 60 * 1e3;
+    const rememberPending = (sessionID, result) => {
+      pending.set(sessionID, {
+        categoriesJson: result.categoriesJson,
+        buckets: result.buckets,
+        createdAt: Date.now()
+      });
+    };
+    const pendingFor = (sessionID) => {
+      const entry = pending.get(sessionID);
+      if (entry === void 0) return void 0;
+      if (Date.now() - entry.createdAt > PENDING_TTL_MS) {
+        pending.delete(sessionID);
+        return void 0;
+      }
+      return entry;
+    };
+    const takePending = (sessionID) => {
+      const entry = pendingFor(sessionID);
+      if (entry !== void 0) pending.delete(sessionID);
+      return entry;
+    };
+    const applySelection = async (sessionID, categoriesJson, buckets, ids) => {
+      const valid = filterBucketIds(buckets, ids);
+      if (valid.length === 0) return void 0;
+      const categoriesFile = writeCategoriesFile(sessionID, categoriesJson);
+      await ctx.storage.set(selectionKey(sessionID), {
+        categoriesFile,
+        categoryIds: valid.join(","),
+        selectedAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      cache.clear();
+      pending.delete(sessionID);
+      return formatSelectedLabels(buckets, valid);
+    };
     await ctx.command.transform((editor) => {
       editor.add({
         name: COMMAND_NAME,
         description: "Prune the session's context by topic bucket (ctxed).",
         async execute({ sessionID, prompt }) {
+          const requested = parseSelectionInput(commandText(prompt));
+          if (requested.length > 0) {
+            const carried = takePending(sessionID);
+            if (carried !== void 0) {
+              const carriedLabels = await applySelection(sessionID, carried.categoriesJson, carried.buckets, requested);
+              if (carriedLabels !== void 0) {
+                await say(sessionID, `Selected ${carriedLabels}; dropped on every subsequent dispatch.`);
+                return;
+              }
+            }
+          }
           const messages = await sessionMessages(ctx, sessionID);
           if (messages.length === 0) {
             await say(sessionID, `No session messages to categorize yet; send a message, then /${COMMAND_NAME}.`);
             return;
           }
+          await say(sessionID, `Categorizing this session\u2026 (a model call; a long session can take ~30s)`);
           const result = await categorizeLive({
             transcript: JSON.stringify(serializeContextMessages(messages)),
             config,
@@ -439,26 +502,37 @@ var CtxedPrunePlugin = Plugin.define({
             await say(sessionID, `ctxed-opencode: categorize failed: ${result.error}`);
             return;
           }
-          const selected = parseSelectionInput(commandText(prompt));
-          if (selected.length === 0) {
+          if (requested.length === 0) {
+            rememberPending(sessionID, result);
             await say(
               sessionID,
               `${formatBuckets(result.buckets)}
-Select buckets with /${COMMAND_NAME} <ids> (e.g. /${COMMAND_NAME} 1,3).`
+Reply with the bucket numbers to drop (e.g. 3 or 3,4), or run /${COMMAND_NAME} 3.`
             );
             return;
           }
-          const categoriesFile = writeCategoriesFile(sessionID, result.categoriesJson);
-          const categoryIds = selected.join(",");
-          await ctx.storage.set(selectionKey(sessionID), {
-            categoriesFile,
-            categoryIds,
-            selectedAt: (/* @__PURE__ */ new Date()).toISOString()
-          });
-          cache.clear();
-          await say(sessionID, `Selected buckets ${categoryIds}; dropped on every subsequent dispatch.`);
+          const labels = await applySelection(sessionID, result.categoriesJson, result.buckets, requested);
+          await say(
+            sessionID,
+            labels === void 0 ? `No bucket matched ${requested.join(",")}; nothing dropped.` : `Selected ${labels}; dropped on every subsequent dispatch.`
+          );
         }
       });
+    });
+    await ctx.session.hook("prompt", async (event) => {
+      try {
+        const sessionID = String(event.sessionID ?? "");
+        if (sessionID === "") return;
+        const carried = pendingFor(sessionID);
+        if (carried === void 0) return;
+        const ids = parseBareSelection(commandText(event.prompt));
+        if (ids.length === 0) return;
+        const labels = await applySelection(sessionID, carried.categoriesJson, carried.buckets, ids);
+        if (labels === void 0) return;
+        event.prompt.text = `ctxed dropped ${labels} from context. Continue.`;
+      } catch (error) {
+        report("ctxed-opencode: selection hook failed", error);
+      }
     });
     await ctx.session.hook("context", async (event) => {
       const messages = event.messages;

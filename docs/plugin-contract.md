@@ -96,6 +96,10 @@ gives two surfaces:
 - `command.transform` — registers the in-session `/ctxed-prune` command, which
   categorizes the live conversation via `session.context`, presents the buckets,
   and records the selection.
+- `session.hook("prompt")` — matches a bare-number reply (`3`, `2,4`) against the
+  buckets the command just listed, records that selection, and rewrites the
+  message so the model sees what was dropped. This is what makes the flow tight:
+  the user answers the listing instead of retyping the command.
 
 The plugin must be **bundled to a single flat file** under
 `.opencode/plugins/` — OpenCode does not scan a subdirectory. See

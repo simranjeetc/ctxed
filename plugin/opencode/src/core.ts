@@ -585,3 +585,32 @@ export function parseSelectionInput(input: string): string[] {
     .map((s) => s.trim())
     .filter((s) => /^\d+$/.test(s))
 }
+
+/**
+ * Matches a *bare* bucket selection: a message that is nothing but bucket ids,
+ * optionally prefixed with "drop" (e.g. "3", "3,4", "drop 1 3"). Stricter than
+ * parseSelectionInput, which extracts ids from anywhere in a sentence — so a
+ * reply like "what about 3?" is not mistaken for a selection. Returns [] when
+ * the whole message is not a selection.
+ */
+export function parseBareSelection(input: string): string[] {
+  const text = input.trim()
+  if (text === "") return []
+  if (!/^(?:drop\s+)?\d+(?:[\s,]+\d+)*$/i.test(text)) return []
+  return parseSelectionInput(text)
+}
+
+/** Keeps only the requested ids that name a real bucket, in the order asked. */
+export function filterBucketIds(buckets: readonly Bucket[], ids: readonly string[]): string[] {
+  return ids.filter((id) => buckets.some((bucket) => String(bucket.id) === id))
+}
+
+/** Names the selected buckets for a confirmation ("bucket 3 (plugin install)"). */
+export function formatSelectedLabels(buckets: readonly Bucket[], ids: readonly string[]): string {
+  return ids
+    .map((id) => {
+      const bucket = buckets.find((candidate) => String(candidate.id) === id)
+      return bucket === undefined ? `bucket ${id}` : `bucket ${id} (${bucket.label})`
+    })
+    .join(", ")
+}

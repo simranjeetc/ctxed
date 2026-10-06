@@ -10,10 +10,13 @@ import {
   categorizeLive,
   carriesDroppedToolCall,
   extractJsonObject,
+  filterBucketIds,
   filterDropped,
   filterMessages,
   formatBuckets,
+  formatSelectedLabels,
   loadConfig,
+  parseBareSelection,
   parseBuckets,
   parseDropped,
   parseDroppedIds,
@@ -406,6 +409,46 @@ test("parseSelectionInput accepts bucket ids and nothing else", () => {
   assert.deepEqual(parseSelectionInput("1 3 5"), ["1", "3", "5"])
   assert.deepEqual(parseSelectionInput(""), [])
   assert.deepEqual(parseSelectionInput("msg_abc"), [], "message ids are not selectable")
+})
+
+// --- bare-number reply: the user answers the listed buckets directly --------
+
+test("parseBareSelection accepts a message that is only bucket numbers", () => {
+  assert.deepEqual(parseBareSelection("3"), ["3"])
+  assert.deepEqual(parseBareSelection(" 3 "), ["3"])
+  assert.deepEqual(parseBareSelection("3,4"), ["3", "4"])
+  assert.deepEqual(parseBareSelection("1 3 5"), ["1", "3", "5"])
+  assert.deepEqual(parseBareSelection("drop 3"), ["3"])
+  assert.deepEqual(parseBareSelection("Drop 3,4"), ["3", "4"])
+})
+
+test("parseBareSelection ignores numbers that are part of a sentence", () => {
+  // A stray number in normal prose must never prune a bucket.
+  assert.deepEqual(parseBareSelection("what about 3?"), [])
+  assert.deepEqual(parseBareSelection("I have 3 questions"), [])
+  assert.deepEqual(parseBareSelection("use option 2 please"), [])
+  assert.deepEqual(parseBareSelection(""), [])
+  assert.deepEqual(parseBareSelection("drop"), [], "the verb alone names nothing")
+})
+
+test("filterBucketIds keeps only ids that name a real bucket", () => {
+  const buckets = [
+    { id: 1, label: "a", entryCount: 1, tokens: 1 },
+    { id: 3, label: "b", entryCount: 2, tokens: 2 },
+  ]
+  assert.deepEqual(filterBucketIds(buckets, ["3", "9"]), ["3"])
+  assert.deepEqual(filterBucketIds(buckets, ["9"]), [])
+  assert.deepEqual(filterBucketIds(buckets, ["1", "3"]), ["1", "3"])
+})
+
+test("formatSelectedLabels names the buckets a human picked", () => {
+  const buckets = [
+    { id: 1, label: "db schema", entryCount: 4, tokens: 40 },
+    { id: 3, label: "plugin install", entryCount: 135, tokens: 122345 },
+  ]
+  assert.equal(formatSelectedLabels(buckets, ["3"]), "bucket 3 (plugin install)")
+  assert.equal(formatSelectedLabels(buckets, ["1", "3"]), "bucket 1 (db schema), bucket 3 (plugin install)")
+  assert.equal(formatSelectedLabels(buckets, ["9"]), "bucket 9", "an unknown id is still named, never hidden")
 })
 
 // --- tool-call id matching: a dropped call's result has no message id -------

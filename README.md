@@ -28,7 +28,7 @@ promise the same thing. Read the difference before relying on either:
 | | OpenCode — live bucket prune | Claude Code — compaction steering |
 | --- | --- | --- |
 | Entry point | `/ctxed-prune` inside the session | `ctxed-prune-context` **skill**, or `ctxed compact-instruction` in a terminal |
-| Stays in session? | Yes — pick buckets, done | Yes with the skill (the agent runs the commands); the terminal flow leaves the session |
+| Stays in session? | Yes — run `/ctxed-prune`, then answer with the bucket numbers | Yes with the skill (the agent runs the commands); the terminal flow leaves the session |
 | What it does | Drops the named messages **by id** | Asks Claude's `/compact` to drop the named buckets |
 | Guarantee | **Exact** — the named messages are gone | **Best-effort** — the summary is steered, not forced |
 

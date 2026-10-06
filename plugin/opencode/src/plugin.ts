@@ -1,9 +1,11 @@
 // OpenCode dispatch plugin: apply a ctxed prune to the outbound transcript.
 //
-// This file is deliberately thin. It registers two surfaces:
+// This file is deliberately thin. It registers three surfaces:
 //
 //   - an in-session command that categorizes the live conversation via ctxed,
-//     presents the buckets, and records the user's bucket selection; and
+//     presents the buckets, and records the user's bucket selection;
+//   - a `prompt` hook that lets the user answer the listed buckets with just
+//     their numbers, so a second command invocation is not needed; and
 //   - a dispatch hook on OpenCode's `context` seam that re-derives the dropped
 //     set over the live transcript and removes matching messages by id.
 //
@@ -23,14 +25,19 @@ import {
   categorizeLive,
   commandRunner,
   defaultRunner,
+  filterBucketIds,
   formatBuckets,
+  formatSelectedLabels,
   loadConfig,
+  parseBareSelection,
   parseSelection,
   parseSelectionInput,
   PruneCache,
   resolveCtxedPath,
   selectionKey,
   sessionRevision,
+  type Bucket,
+  type CategorizeResult,
   type LiveMessage,
 } from "./core.ts"
 import { serializeContextMessages, transcriptJson, type ContextMessage } from "./transcript.ts"
@@ -73,6 +80,63 @@ export const CtxedPrunePlugin = Plugin.define({
       }
     }
 
+    // Buckets from the last `/ctxed-prune` listing, per session, so the user can
+    // answer with just the numbers instead of retyping the command. Held in
+    // memory (not storage): a pending choice is about the conversation on screen
+    // right now, and should not survive a restart.
+    const pending = new Map<string, PendingBuckets>()
+    const PENDING_TTL_MS = 10 * 60 * 1000
+
+    const rememberPending = (sessionID: string, result: CategorizeResult): void => {
+      pending.set(sessionID, {
+        categoriesJson: result.categoriesJson,
+        buckets: result.buckets,
+        createdAt: Date.now(),
+      })
+    }
+
+    // The offer stands until it is used or expires. It deliberately survives
+    // other messages: a queued prompt admitted late, or a question asked before
+    // answering, must not silently discard the listing the user is looking at.
+    // `createdAt` bounds how long the offer stands.
+    const pendingFor = (sessionID: string): PendingBuckets | undefined => {
+      const entry = pending.get(sessionID)
+      if (entry === undefined) return undefined
+      if (Date.now() - entry.createdAt > PENDING_TTL_MS) {
+        pending.delete(sessionID)
+        return undefined
+      }
+      return entry
+    }
+
+    // Reading to consume: used when the user explicitly answers with ids.
+    const takePending = (sessionID: string): PendingBuckets | undefined => {
+      const entry = pendingFor(sessionID)
+      if (entry !== undefined) pending.delete(sessionID)
+      return entry
+    }
+
+    // Records a selection and makes the dispatch hook apply it. Returns the
+    // human label of what was selected, or undefined when no id names a bucket.
+    const applySelection = async (
+      sessionID: string,
+      categoriesJson: string,
+      buckets: readonly Bucket[],
+      ids: readonly string[],
+    ): Promise<string | undefined> => {
+      const valid = filterBucketIds(buckets, ids)
+      if (valid.length === 0) return undefined
+      const categoriesFile = writeCategoriesFile(sessionID, categoriesJson)
+      await ctx.storage.set(selectionKey(sessionID), {
+        categoriesFile,
+        categoryIds: valid.join(","),
+        selectedAt: new Date().toISOString(),
+      })
+      cache.clear()
+      pending.delete(sessionID)
+      return formatSelectedLabels(buckets, valid)
+    }
+
     // In-session command: `/ctxed-prune` lists buckets; `/ctxed-prune 1,3`
     // records a selection. A ctxed failure reports and leaves the session
     // unchanged (fail-open).
@@ -81,6 +145,22 @@ export const CtxedPrunePlugin = Plugin.define({
         name: COMMAND_NAME,
         description: "Prune the session's context by topic bucket (ctxed).",
         async execute({ sessionID, prompt }) {
+          const requested = parseSelectionInput(commandText(prompt))
+
+          // Fast path: the buckets were already listed and the user is answering
+          // with ids (`/ctxed-prune 3`). Reuse them instead of calling the model
+          // a second time.
+          if (requested.length > 0) {
+            const carried = takePending(sessionID)
+            if (carried !== undefined) {
+              const carriedLabels = await applySelection(sessionID, carried.categoriesJson, carried.buckets, requested)
+              if (carriedLabels !== undefined) {
+                await say(sessionID, `Selected ${carriedLabels}; dropped on every subsequent dispatch.`)
+                return
+              }
+            }
+          }
+
           const messages = await sessionMessages(ctx as never, sessionID)
           if (messages.length === 0) {
             await say(sessionID, `No session messages to categorize yet; send a message, then /${COMMAND_NAME}.`)
@@ -102,26 +182,49 @@ export const CtxedPrunePlugin = Plugin.define({
             return
           }
 
-          const selected = parseSelectionInput(commandText(prompt))
-          if (selected.length === 0) {
+          if (requested.length === 0) {
+            rememberPending(sessionID, result)
             await say(
               sessionID,
-              `${formatBuckets(result.buckets)}\nSelect buckets with /${COMMAND_NAME} <ids> (e.g. /${COMMAND_NAME} 1,3).`,
+              `${formatBuckets(result.buckets)}\nReply with the bucket numbers to drop (e.g. 3 or 3,4), or run /${COMMAND_NAME} 3.`,
             )
             return
           }
 
-          const categoriesFile = writeCategoriesFile(sessionID, result.categoriesJson)
-          const categoryIds = selected.join(",")
-          await ctx.storage.set(selectionKey(sessionID), {
-            categoriesFile,
-            categoryIds,
-            selectedAt: new Date().toISOString(),
-          })
-          cache.clear()
-          await say(sessionID, `Selected buckets ${categoryIds}; dropped on every subsequent dispatch.`)
+          const labels = await applySelection(sessionID, result.categoriesJson, result.buckets, requested)
+          await say(
+            sessionID,
+            labels === undefined
+              ? `No bucket matched ${requested.join(",")}; nothing dropped.`
+              : `Selected ${labels}; dropped on every subsequent dispatch.`,
+          )
         },
       })
+    })
+
+    // Bare-number reply: the user saw the buckets from `/ctxed-prune` and answers
+    // with just the numbers. Apply the pending buckets (no second model call) and
+    // rewrite the message so the model sees what was dropped, not a stray "3".
+    await ctx.session.hook("prompt", async (event) => {
+      try {
+        const sessionID = String((event as { sessionID?: unknown }).sessionID ?? "")
+        if (sessionID === "") return
+
+        // Peek, do not consume: a message that is not a selection leaves the
+        // offer standing, so the user can ask something first and answer after.
+        const carried = pendingFor(sessionID)
+        if (carried === undefined) return
+
+        const ids = parseBareSelection(commandText(event.prompt))
+        if (ids.length === 0) return
+
+        const labels = await applySelection(sessionID, carried.categoriesJson, carried.buckets, ids)
+        if (labels === undefined) return
+        event.prompt.text = `ctxed dropped ${labels} from context. Continue.`
+      } catch (error) {
+        // A hook must never break admission; fail open and report.
+        report("ctxed-opencode: selection hook failed", error)
+      }
     })
 
     // Dispatch hook: apply the recorded selection to the live transcript.
@@ -220,6 +323,16 @@ async function sessionMessages(
   } catch {
     return []
   }
+}
+
+/**
+ * Buckets listed by the last `/ctxed-prune`, held until the user answers with
+ * the numbers (or moves on). `createdAt` bounds how long that offer stands.
+ */
+interface PendingBuckets {
+  categoriesJson: string
+  buckets: Bucket[]
+  createdAt: number
 }
 
 /**

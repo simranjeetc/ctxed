@@ -11,13 +11,20 @@ for the buckets and the dropped ids, and does what ctxed says.
 1. In-session, you run `/ctxed-prune`. The plugin reads the live conversation
    (`session.context`), hands it to ctxed on stdin, and prints the buckets:
    labels only — never message ids.
-2. You pick buckets: `/ctxed-prune 2,4`. The plugin records that selection for
-   the session.
+2. You pick buckets by answering with their numbers — just `3`, or `2,4`. A
+   `prompt` hook matches that reply, applies the buckets already listed, and
+   rewrites the message so the model sees what was dropped. `/ctxed-prune 2,4`
+   still works, and reuses the same listing instead of categorizing again.
 3. On every dispatch, OpenCode runs the plugin's `session.hook("context")`
    handler with the live message list. The plugin re-derives the dropped set
    over the **live** transcript (`ctxed prune - … --ids-only`), removes matching
    messages by id, and leaves everything else untouched. Stored history is never
    written.
+
+The listing from step 1 stands for ten minutes: a message in between (a question,
+a queued turn) does not discard it, so you can answer with the numbers whenever
+you are ready. Only a number that names a bucket applies it — a number inside a
+sentence never does.
 
 Because the dropped set is re-derived on each dispatch, a message added after
 you made the selection is covered by it too — the session does not drift out of

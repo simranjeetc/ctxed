@@ -252,6 +252,55 @@ for m in (items if isinstance(items, list) else []):
 print("\n".join(parts))'
 }
 
+# hook_outbound <dir> — the ids the dispatch hook kept in its most recent
+# decision (the last line of the debug log), space-separated. Empty when the log
+# is missing or unreadable.
+hook_outbound() {
+  tail -1 "$1/hook.log" 2>/dev/null | python3 -c '
+import json,sys
+try: print(" ".join(x for x in json.loads(sys.stdin.read())["after"] if x))
+except Exception: print("")'
+}
+
+# oc_drain <port> <sid> — run one cheap turn so the session inbox materializes.
+# A plugin's synthetic message is admitted to the session inbox and appears in
+# the message list on the next turn. Reading the list without a turn races that
+# drain, which makes a visibility assertion flaky: the plugin has already said
+# its piece, but the message has not landed yet.
+oc_drain() {
+  oc_api "$1" POST "/api/session/$2/prompt" '{"text":"Reply with only: ok","delivery":"queue"}' >/dev/null
+  sleep 8
+}
+
+# oc_wait_text <port> <sid> <pattern> [attempts] — poll the session messages for
+# a pattern, running a cheap turn between attempts so a synthetic message that
+# was admitted to the inbox lands in the transcript. 0 once it appears.
+oc_wait_text() {
+  local port="$1" sid="$2" pattern="$3" attempts="${4:-8}" i
+  for i in $(seq 1 "$attempts"); do
+    grep -q "$pattern" <<<"$(oc_session_text "$port" "$sid")" && return 0
+    oc_drain "$port" "$sid"
+  done
+  return 1
+}
+
+# oc_wait_outbound <port> <sid> <dir> <id> <present|absent> [attempts] — poll the
+# dispatch hook's most recent outbound list until the id is present (or gone),
+# running a cheap turn between attempts so a dispatch actually happens. Drains
+# are safe: a message that is not a selection leaves a pending offer standing.
+oc_wait_outbound() {
+  local port="$1" sid="$2" dir="$3" id="$4" want="$5" attempts="${6:-12}" i out
+  for i in $(seq 1 "$attempts"); do
+    out="$(hook_outbound "$dir")"
+    if [[ -n "$out" ]]; then
+      if [[ "$want" == "present" ]] && grep -q -- "$id" <<<"$out"; then return 0; fi
+      if [[ "$want" == "absent" ]] && ! grep -q -- "$id" <<<"$out"; then return 0; fi
+    fi
+    oc_drain "$port" "$sid"
+  done
+  return 1
+}
+
 # Guard: the command API this verifier drives is a real, declared surface, so a
 # future OpenCode upgrade that moves it fails with a clear message instead of a
 # confusing timeout. Two facts are checked:
@@ -362,15 +411,20 @@ PY
   local port; port="$(free_port)"
   if [[ "$mode" == "selfconfig" ]]; then
     # Place the stub where the plugin's bundled-categorizer fallback looks:
-    # <proj>/scripts/ (two levels up from .opencode/plugins/). No env is set.
+    # <proj>/scripts/ (two levels up from .opencode/plugins/). No ctxed or
+    # categorizer configuration is set.
     mkdir -p "$proj/scripts"
     cp "$dir/stub-categorize.py" "$proj/scripts/ctxed-categorizer-opencode.sh"
-    # A minimal PATH and no CTXED_PLUGIN_*: the plugin must find ctxed through
-    # its own search (~/go/bin, Homebrew, …), exactly as on a real machine. The
-    # real HOME is kept so the harness stays authenticated.
+    # A minimal PATH and no ctxed/categorizer config: the plugin must find both
+    # through its own search (~/go/bin, Homebrew, the bundled script), exactly as
+    # on a real machine. The real HOME is kept so the harness stays
+    # authenticated. CTXED_PLUGIN_DEBUG_LOG is a verifier-only knob: it changes
+    # no plugin behavior and helps the plugin resolve nothing, so it does not
+    # weaken the self-configuration claim.
     ( cd "$proj" \
       && env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
          OPENCODE_PASSWORD="$(opencode_password)" \
+         CTXED_PLUGIN_DEBUG_LOG="$dir/hook.log" \
          "$(command -v opencode)" serve --port "$port" >"$dir/server.log" 2>&1 & echo $! > "$dir/server.pid" )
   else
     ( cd "$proj" \
@@ -545,9 +599,7 @@ for line in sys.stdin:
   # on the session messages, not the server log, or a plugin that prints to
   # stdout (invisible) would pass.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":""}' >/dev/null
-  sleep 6
-  local bucket_view; bucket_view="$(oc_session_text "$OC_PORT" "$sid")"
-  if grep -q 'Categories:' <<<"$bucket_view"; then
+  if oc_wait_text "$OC_PORT" "$sid" 'Categories:'; then
     pass "opencode:in-session command (categorized the live session; buckets visible in the session)"
   else
     fail "opencode:in-session command" \
@@ -559,13 +611,11 @@ for line in sys.stdin:
   # across several turns, must be dropped; beta must survive. The confirmation
   # must likewise be visible in the session.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":"1"}' >/dev/null
-  sleep 8
-  local sel_view; sel_view="$(oc_session_text "$OC_PORT" "$sid")"
-  if grep -q 'Selected buckets' <<<"$sel_view"; then
+  if oc_wait_text "$OC_PORT" "$sid" 'Selected bucket'; then
     pass "opencode:selection recorded (confirmation visible in the session)"
   else
     fail "opencode:selection recorded" \
-      "no 'Selected buckets'; session said: $(tr '\n' ' ' <<<"$sel_view" | tail -c 300)"
+      "no 'Selected bucket'; session said: $(oc_session_text "$OC_PORT" "$sid" | tr '\n' ' ' | tail -c 300)"
     abort_opencode "$dir" "$sid"; return
   fi
 
@@ -887,9 +937,7 @@ opencode_selfconfig_scenario() {
   # 1. The command must run and its buckets must be VISIBLE IN THE SESSION —
   #    with no plugin env and a minimal PATH.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":""}' >/dev/null
-  sleep 8
-  local view; view="$(oc_session_text "$OC_PORT" "$sid")"
-  if grep -q 'Categories:' <<<"$view"; then
+  if oc_wait_text "$OC_PORT" "$sid" 'Categories:'; then
     pass "opencode:self-config (no plugin env, minimal PATH: buckets visible in the session)"
   else
     fail "opencode:self-config" \
@@ -898,13 +946,60 @@ opencode_selfconfig_scenario() {
 
   # 2. A selection must apply under the same conditions.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":"1"}' >/dev/null
-  sleep 8
-  local sel; sel="$(oc_session_text "$OC_PORT" "$sid")"
-  if grep -q 'Selected buckets' <<<"$sel"; then
+  if oc_wait_text "$OC_PORT" "$sid" 'Selected bucket'; then
     pass "opencode:self-config selection (visible with no plugin env)"
   else
     fail "opencode:self-config selection" \
-      "no 'Selected buckets'; session said: $(tr '\n' ' ' <<<"$sel" | tail -c 300)"
+      "no 'Selected bucket'; session said: $(oc_session_text "$OC_PORT" "$sid" | tr '\n' ' ' | tail -c 300)"
+  fi
+
+  # 3. The tight path: list the buckets, then answer with just the number. The
+  #    prompt hook must match that reply, record the selection, and the next
+  #    dispatch must drop the bucket — no second command, and no second model
+  #    call to categorize. Beta (id 2) is still present, so dropping it is new.
+  oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":""}' >/dev/null
+  if oc_wait_text "$OC_PORT" "$sid" 'Reply with the bucket numbers'; then
+    pass "opencode:self-config listing offers a bare-number reply"
+  else
+    fail "opencode:self-config listing" \
+      "the listing did not offer a bare-number reply: $(oc_session_text "$OC_PORT" "$sid" | tr '\n' ' ' | tail -c 200)"
+  fi
+
+  # Assert the drop by the beta message's id leaving the outbound list — never by
+  # a total count. The listing itself adds synthetic messages, so the count can
+  # rise even when a bucket is dropped.
+  local beta_id
+  beta_id="$(oc_api "$OC_PORT" GET "/api/session/$sid/message" | python3 -c '
+import json,sys
+d=json.load(sys.stdin); items=d.get("data",d) if isinstance(d,dict) else d
+for m in (items if isinstance(items,list) else []):
+    t=m.get("text")
+    if isinstance(t,str) and "TOPIC-BETA" in t and isinstance(m.get("id"),str):
+        print(m["id"]); break
+else: print("")')"
+
+  # Beta must be in the outbound list before the reply, or the assertion after it
+  # proves nothing.
+  if [[ -n "$beta_id" ]] && oc_wait_outbound "$OC_PORT" "$sid" "$dir" "$beta_id" present; then
+    pass "opencode:self-config beta message is in the outbound list before the reply"
+  else
+    fail "opencode:self-config beta in outbound list" \
+      "the beta message ($beta_id) was not in the hook's last dispatch"
+  fi
+
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" '{"text":"2","delivery":"queue"}' >/dev/null
+  if [[ -n "$beta_id" ]] && oc_wait_outbound "$OC_PORT" "$sid" "$dir" "$beta_id" absent; then
+    pass "opencode:self-config bare-number reply pruned (a plain \"2\" dropped the beta bucket)"
+  else
+    fail "opencode:self-config bare-number reply" \
+      "the beta message ($beta_id) was still outbound after the reply"
+  fi
+
+  if oc_wait_text "$OC_PORT" "$sid" 'ctxed dropped bucket'; then
+    pass "opencode:self-config bare-number reply rewrote the message"
+  else
+    fail "opencode:self-config bare-number rewrite" \
+      "the reply was not rewritten; session said: $(oc_session_text "$OC_PORT" "$sid" | tr '\n' ' ' | tail -c 200)"
   fi
 
   oc_api "$OC_PORT" DELETE "/api/session/$sid" >/dev/null 2>&1
