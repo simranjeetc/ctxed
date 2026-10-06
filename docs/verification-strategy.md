@@ -93,7 +93,11 @@ scenario asserts the plugin resolved that path.
 2. Locate its transcript; `inspect` it.
 3. `categorize` → `compact-instruction` → the instruction sentence.
 4. Drive compaction headlessly (`claude -p --resume <id> "/compact <instr>"`).
-5. Assert the stored transcript changed, the session id is unchanged, and the
+5. Assert compaction happened, on what it writes: exactly one new
+   `compact_boundary` line whose `compactMetadata.postTokens < preTokens`,
+   followed by an `isCompactSummary` entry. (Compaction appends, so an entry
+   count always changes and cannot be the check.) Then assert `ctxed inspect`
+   reads the live context (summary first), the session id is unchanged, and the
    session continues.
 6. When the D3b mod lands, add the same assertions against an exact bucket drop.
 

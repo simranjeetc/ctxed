@@ -897,3 +897,119 @@ func TestCategorizeOutDashPrintsJSONToStdout(t *testing.T) {
 		t.Fatal("--out - created a literal '-' file")
 	}
 }
+
+// claudeCompactedFixture was compacted twice; only the summary, the turn the
+// last compaction preserved, and what follows are live.
+const claudeCompactedFixture = "../../testdata/claude_session_compacted.jsonl"
+
+const (
+	compactedPreBoundaryID = "0519c9a1-e3b5-4f8d-bd2e-726597806b31" // "Topic one", before both boundaries
+	compactedSummaryID     = "e28825bc-c506-46e0-aeeb-2e3c0c87f548" // the last compaction's summary
+	compactedTopicFourID   = "dc7cd06f-0bd8-4ef0-9884-48be47a7d4ce" // after the last boundary
+)
+
+func TestInspectCompactedShowsLiveContext(t *testing.T) {
+	code, out, errOut := run("inspect", claudeCompactedFixture, "--json")
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, errOut)
+	}
+	var r struct {
+		Entries []struct {
+			Kind string `json:"kind"`
+		} `json:"entries"`
+		TotalEntries int `json:"totalEntries"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, out)
+	}
+	if r.TotalEntries != 9 || len(r.Entries) != 9 {
+		t.Fatalf("total %d rows %d, want 9/9", r.TotalEntries, len(r.Entries))
+	}
+	if r.Entries[0].Kind != "summary" {
+		t.Fatalf("entry 0 kind %q, want summary", r.Entries[0].Kind)
+	}
+	if strings.Contains(out, "Topic one") {
+		t.Fatalf("inspect shows compacted history:\n%s", out)
+	}
+}
+
+func TestCategorizeCompactedSeesOnlyLiveEntries(t *testing.T) {
+	in := copyFixture(t, claudeCompactedFixture)
+	dir := filepath.Dir(in)
+	prompt := filepath.Join(dir, "prompt.txt")
+	response := filepath.Join(dir, "response.json")
+	// The response also names a pre-boundary id; it must not reach a bucket.
+	resp := `{"categories":[` +
+		`{"label":"Earlier work","ids":["` + compactedSummaryID + `","` + compactedPreBoundaryID + `"]},` +
+		`{"label":"Logo","ids":["` + compactedTopicFourID + `"]}]}`
+	if err := os.WriteFile(response, []byte(resp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cats := filepath.Join(dir, "cats.json")
+	code, _, stderr := run("categorize", in, "--categorizer-cmd", "cat > "+prompt+"; cat "+response, "--out", cats)
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	sent, _ := os.ReadFile(prompt)
+	if strings.Contains(string(sent), compactedPreBoundaryID) || strings.Contains(string(sent), "Topic one") {
+		t.Fatalf("the categorizer was shown pre-boundary entries:\n%s", sent)
+	}
+	if !strings.Contains(string(sent), compactedTopicFourID) {
+		t.Fatalf("the categorizer was not shown the live entries:\n%s", sent)
+	}
+	data, _ := os.ReadFile(cats)
+	if strings.Contains(string(data), compactedPreBoundaryID) {
+		t.Fatalf("a category references a pre-boundary entry:\n%s", data)
+	}
+
+	code, stdout, stderr := run("prune", in, "--categories-file", cats, "--categories", "2", "--ids-only")
+	if code != cli.ExitOK {
+		t.Fatalf("prune: exit %d stderr %q", code, stderr)
+	}
+	if !strings.Contains(stdout, compactedTopicFourID) {
+		t.Fatalf("prune did not resolve the live bucket: %s", stdout)
+	}
+
+	code, stdout, stderr = run("compact-instruction", in, "--categories-file", cats, "--categories", "2")
+	if code != cli.ExitOK {
+		t.Fatalf("compact-instruction: exit %d stderr %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "drop the context about Logo") {
+		t.Fatalf("instruction = %q", stdout)
+	}
+}
+
+func TestPruneCompactedEntryIsUnknown(t *testing.T) {
+	in := copyFixture(t, claudeCompactedFixture)
+	code, _, stderr := run("prune", in, "--ids", compactedPreBoundaryID, "--ids-only")
+	if code != cli.ExitRefused {
+		t.Fatalf("pruning a pre-boundary id: exit %d, want %d (stderr %q)", code, cli.ExitRefused, stderr)
+	}
+}
+
+func TestDropCompactedKeepsHistory(t *testing.T) {
+	in := copyFixture(t, claudeCompactedFixture)
+	before, _ := os.ReadFile(in)
+	out := filepath.Join(filepath.Dir(in), "edited.jsonl")
+	// Index 6 is the "Topic four" prompt in the live view.
+	if code, _, stderr := run("drop", in, "--indices", "6", "--out", out); code != cli.ExitOK {
+		t.Fatalf("exit %d stderr %q", code, stderr)
+	}
+	after, _ := os.ReadFile(out)
+	if strings.Contains(string(after), compactedTopicFourID) {
+		t.Fatal("dropped entry still present")
+	}
+	in0 := strings.Split(string(before), "\n")
+	out0 := strings.Split(string(after), "\n")
+	if len(out0) != len(in0)-1 {
+		t.Fatalf("%d lines -> %d, want exactly one fewer", len(in0), len(out0))
+	}
+	for i, l := range in0 {
+		if strings.Contains(l, compactedTopicFourID) {
+			break
+		}
+		if out0[i] != l {
+			t.Fatalf("line %d before the dropped entry changed", i)
+		}
+	}
+}

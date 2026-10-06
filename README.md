@@ -242,6 +242,13 @@ ctxed compact-instruction ~/.claude/projects/<project>/<session>.jsonl \
 # then paste the printed sentence after `/compact ` in the session
 ```
 
+Claude Code compacts by appending, not rewriting: the transcript keeps the old
+conversation, then a compaction boundary and a summary. ctxed reads only the
+**live context**: the last summary, any messages that compaction kept, and
+everything after it. So `inspect` totals, buckets and instructions cover only
+what the model still carries. Compacted entries cannot be dropped, and every
+line of the file is still written back.
+
 **OpenCode** — sessions live in SQLite, so export first:
 
 ```sh

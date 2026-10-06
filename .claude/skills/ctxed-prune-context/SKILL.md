@@ -69,6 +69,11 @@ run — report the missing prerequisite instead.
 
    `--out -` prints the categories JSON to stdout instead of writing a file.
 
+   Only the **live context** is categorized. If the session was compacted
+   before, ctxed starts at the last compaction: the earlier summary is one
+   entry, followed by what came after. Topics that compaction already removed
+   cannot come back as buckets, so never offer to drop them.
+
    That script asks an **OpenCode Go** model (no API key needed); override it
    with `CTXED_CATEGORIZER_MODEL`. `categorize` also accepts a direct model:
 

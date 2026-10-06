@@ -1315,7 +1315,7 @@ print(o.get("session_id") or o.get("sessionId") or "")' "$out" 2>/dev/null)"
   fi
   pass "claude:find transcript"
 
-  local before after
+  local before
   before="$("$CTXED" inspect "$transcript" | awk '/^TOTAL/{print $2}')"
   [[ -n "$before" ]] && pass "claude:inspect before ($before entries)" \
     || fail "claude:inspect before"
@@ -1348,17 +1348,41 @@ print(o.get("session_id") or o.get("sessionId") or "")' "$out" 2>/dev/null)"
     return
   fi
 
-  after="$("$CTXED" inspect "$transcript" | awk '/^TOTAL/{print $2}')"
-  if [[ -n "$after" ]]; then
-    # Compaction replaces history; the assertion is that it changed and the
-    # session still exists under the same id.
-    if [[ "$after" != "$before" ]]; then
-      pass "claude:session changed ($before -> $after entries)"
-    else
-      fail "claude:session changed" "entry count unchanged ($before)"
-    fi
+  # Compaction appends to the transcript rather than rewriting it, so an entry
+  # count always changes. Assert on what compaction writes instead: a new
+  # boundary that shrank the context, followed by the summary.
+  local verdict
+  verdict="$(python3 -c '
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+b = [i for i, l in enumerate(lines) if l.get("type") == "system" and l.get("subtype") == "compact_boundary"]
+if len(b) != 1:
+    print("NO_BOUNDARY %d boundaries, want 1 (one /compact)" % len(b)); sys.exit()
+m = lines[b[0]].get("compactMetadata") or {}
+pre, post = m.get("preTokens"), m.get("postTokens")
+if not (isinstance(pre, int) and isinstance(post, int) and post < pre):
+    print("NOT_SHRUNK preTokens=%s postTokens=%s" % (pre, post)); sys.exit()
+if not any(l.get("isCompactSummary") for l in lines[b[0] + 1:]):
+    print("NO_SUMMARY no isCompactSummary entry after the boundary"); sys.exit()
+print("OK %s -> %s tokens" % (pre, post))' "$transcript" 2>&1)"
+  if [[ "$verdict" == OK* ]]; then
+    pass "claude:session compacted (${verdict#OK })"
   else
-    fail "claude:inspect after"
+    fail "claude:session compacted" "$verdict"
+  fi
+
+  # ctxed reads the compacted transcript as its live context, which starts at
+  # the summary.
+  local live
+  live="$("$CTXED" inspect "$transcript" --json 2>/dev/null | python3 -c '
+import json, sys
+r = json.load(sys.stdin)
+e = r["entries"]
+print("OK" if e and e[0]["kind"] == "summary" else "first entry is %s" % (e[0]["kind"] if e else "missing"))')"
+  if [[ "$live" == OK ]]; then
+    pass "claude:inspect shows the live context (summary first)"
+  else
+    fail "claude:inspect shows the live context" "$live"
   fi
 
   if ( cd "$dir" && claude -p --resume "$sid" --model "$CLAUDE_MODEL" "reply with only: ok" >/dev/null 2>&1 ); then
