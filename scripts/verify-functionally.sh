@@ -230,6 +230,28 @@ oc_status() {
   fi
 }
 
+# oc_session_text <port> <sid> — prints the concatenated text of a session's
+# messages. This is the channel a user actually sees. Assertions about
+# user-visible output must read it, never the server's stdout: a command's
+# console.log lands in the server log, so asserting there passes even when the
+# user sees nothing.
+oc_session_text() {
+  local port="$1" sid="$2"
+  oc_api "$port" GET "/api/session/$sid/message" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print(""); sys.exit(0)
+items = d.get("data", d) if isinstance(d, dict) else d
+parts = []
+for m in (items if isinstance(items, list) else []):
+    t = m.get("text")
+    if isinstance(t, str):
+        parts.append(t)
+print("\n".join(parts))'
+}
+
 # Guard: the command API this verifier drives is a real, declared surface, so a
 # future OpenCode upgrade that moves it fails with a clear message instead of a
 # confusing timeout. Two facts are checked:
@@ -275,8 +297,14 @@ print("yes" if "ctxed-prune" in names else "no")' 2>/dev/null)"
 
 # Bundles the plugin into a scratch OpenCode project and starts a server there.
 # Sets OC_PORT. Returns non-zero if the plugin cannot be built.
+#
+# mode "env" (default): start with CTXED_PLUGIN_* set and ctxed on PATH — the
+#   deterministic path the main scenario uses.
+# mode "selfconfig": start with a minimal PATH and NO CTXED_PLUGIN_* at all,
+#   mirroring the launchd daemon the plugin really runs under. The plugin must
+#   then resolve ctxed and the categorizer on its own.
 start_opencode_with_plugin() {
-  local src="$1" ctxed_bin="$2" dir="$3"
+  local src="$1" ctxed_bin="$2" dir="$3" mode="${4:-env}"
   local plugin_dir="$src/plugin/opencode"
   [[ -d "$plugin_dir" ]] || return 1
 
@@ -298,8 +326,12 @@ start_opencode_with_plugin() {
   # grouping, so no model call is needed to categorize.
   cat > "$dir/stub-categorize.py" <<'PY'
 #!/usr/bin/env python3
-import re, sys, json
+import re, sys, json, time
 prompt = sys.stdin.read()
+# A real categorizer calls a model and takes seconds. Sleep here so the plugin's
+# command timeout is genuinely exercised: under the old shared 2000ms default
+# this categorize times out, which is the bug this guards against.
+time.sleep(3)
 # Group by scanning each "- id=... : <text>" line for a topic marker.
 alpha, beta, other = [], [], []
 for line in prompt.splitlines():
@@ -328,13 +360,27 @@ PY
   chmod +x "$dir/stub-categorize.py"
 
   local port; port="$(free_port)"
-  ( cd "$proj" \
-    && OPENCODE_PASSWORD="$(opencode_password)" \
-       PATH="$(dirname "$ctxed_bin"):$PATH" \
-       CTXED_PLUGIN_CTXED_PATH="$ctxed_bin" \
-       CTXED_PLUGIN_CATEGORIZER_CMD="$dir/stub-categorize.py" \
-       CTXED_PLUGIN_DEBUG_LOG="$dir/hook.log" \
-       opencode serve --port "$port" >"$dir/server.log" 2>&1 & echo $! > "$dir/server.pid" )
+  if [[ "$mode" == "selfconfig" ]]; then
+    # Place the stub where the plugin's bundled-categorizer fallback looks:
+    # <proj>/scripts/ (two levels up from .opencode/plugins/). No env is set.
+    mkdir -p "$proj/scripts"
+    cp "$dir/stub-categorize.py" "$proj/scripts/ctxed-categorizer-opencode.sh"
+    # A minimal PATH and no CTXED_PLUGIN_*: the plugin must find ctxed through
+    # its own search (~/go/bin, Homebrew, …), exactly as on a real machine. The
+    # real HOME is kept so the harness stays authenticated.
+    ( cd "$proj" \
+      && env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+         OPENCODE_PASSWORD="$(opencode_password)" \
+         "$(command -v opencode)" serve --port "$port" >"$dir/server.log" 2>&1 & echo $! > "$dir/server.pid" )
+  else
+    ( cd "$proj" \
+      && OPENCODE_PASSWORD="$(opencode_password)" \
+         PATH="$(dirname "$ctxed_bin"):$PATH" \
+         CTXED_PLUGIN_CTXED_PATH="$ctxed_bin" \
+         CTXED_PLUGIN_CATEGORIZER_CMD="$dir/stub-categorize.py" \
+         CTXED_PLUGIN_DEBUG_LOG="$dir/hook.log" \
+         opencode serve --port "$port" >"$dir/server.log" 2>&1 & echo $! > "$dir/server.pid" )
+  fi
   local i
   for i in $(seq 1 30); do
     if curl -s -o /dev/null "http://127.0.0.1:$port/api/plugin" \
@@ -494,24 +540,32 @@ for line in sys.stdin:
   oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
     "{\"text\":\"TOPIC-ALPHA: here is a file for the alpha topic. Reply with only: ok\",\"files\":[{\"uri\":\"file://$attach\",\"name\":\"$(basename "$attach")\"}],\"delivery\":\"queue\"}" >/dev/null; sleep 8
 
-  # 4.1 — the in-session command runs and lists buckets over the live session.
+  # 4.1 — the in-session command runs, lists buckets over the live session, and
+  # the buckets are VISIBLE TO THE USER. The visibility half is the point: assert
+  # on the session messages, not the server log, or a plugin that prints to
+  # stdout (invisible) would pass.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":""}' >/dev/null
-  sleep 3
-  if grep -q 'Categories:' "$dir/server.log"; then
-    pass "opencode:in-session command (categorized the live session)"
+  sleep 6
+  local bucket_view; bucket_view="$(oc_session_text "$OC_PORT" "$sid")"
+  if grep -q 'Categories:' <<<"$bucket_view"; then
+    pass "opencode:in-session command (categorized the live session; buckets visible in the session)"
   else
-    fail "opencode:in-session command" "$(tail -3 "$dir/server.log" 2>/dev/null)"
+    fail "opencode:in-session command" \
+      "no 'Categories:' in the session messages — user-visible output missing (printed to stdout instead?)"
     abort_opencode "$dir" "$sid"; return
   fi
 
   # Select the alpha bucket (id 1 by the stub's grouping). Every alpha message,
-  # across several turns, must be dropped; beta must survive.
+  # across several turns, must be dropped; beta must survive. The confirmation
+  # must likewise be visible in the session.
   oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":"1"}' >/dev/null
-  sleep 3
-  if grep -q 'Selected buckets' "$dir/server.log"; then
-    pass "opencode:selection recorded"
+  sleep 8
+  local sel_view; sel_view="$(oc_session_text "$OC_PORT" "$sid")"
+  if grep -q 'Selected buckets' <<<"$sel_view"; then
+    pass "opencode:selection recorded (confirmation visible in the session)"
   else
-    fail "opencode:selection recorded" "$(tail -3 "$dir/server.log" 2>/dev/null)"
+    fail "opencode:selection recorded" \
+      "no 'Selected buckets'; session said: $(tr '\n' ' ' <<<"$sel_view" | tail -c 300)"
     abort_opencode "$dir" "$sid"; return
   fi
 
@@ -777,6 +831,87 @@ except Exception: print(-1)')"
 # Claude Code functional scenario
 # ---------------------------------------------------------------------------
 
+# Self-configuration scenario. The main scenario hands the plugin CTXED_PLUGIN_*
+# env and puts ctxed on PATH; a real install has neither. OpenCode's server runs
+# as a launchd daemon with a minimal PATH, and a local plugin cannot take options
+# from opencode.json. So this scenario starts the server with a minimal PATH and
+# no CTXED_PLUGIN_* at all, and asserts the plugin still works end to end — with
+# its output visible in the session.
+opencode_selfconfig_scenario() {
+  need opencode "OpenCode CLI, authenticated"
+  local src="$ROOT"
+  if ! grep -rq 'ids-only' "$ROOT/internal/cli" 2>/dev/null; then
+    if [[ -d "$HOME/codebase/ctxed-oc/internal/cli" ]]; then
+      src="$HOME/codebase/ctxed-oc"
+    else
+      echo "SKIP opencode self-config (ctxed --ids-only not in this checkout)"
+      return
+    fi
+  fi
+  local ctxed_bin="$src/.verify/ctxed"
+  ( cd "$src" && mkdir -p .verify && go build -o "$ctxed_bin" ./cmd/ctxed ) \
+    || { fail "opencode:self-config build ctxed"; return; }
+
+  # The plugin resolves ctxed from these locations; without one present the
+  # scenario cannot exercise self-configuration. Skip rather than misreport.
+  local found="" c
+  for c in "$HOME/go/bin/ctxed" /opt/homebrew/bin/ctxed /usr/local/bin/ctxed "$HOME/.local/bin/ctxed"; do
+    [[ -x "$c" ]] && { found="$c"; break; }
+  done
+  if [[ -z "$found" ]]; then
+    echo "SKIP opencode self-config (no ctxed in a standard location; install it to ~/go/bin)"
+    return
+  fi
+
+  local dir; dir="$(mkscratch)"
+  start_opencode_with_plugin "$src" "$ctxed_bin" "$dir" selfconfig \
+    || { fail "opencode:self-config server"; return; }
+  oc_command_guard "$OC_PORT" || { abort_opencode "$dir"; return; }
+
+  local model="$OPENCODE_MODEL"
+  local sid
+  sid="$(oc_api "$OC_PORT" POST /api/session '{}' \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("data",{}).get("id",""))')"
+  if [[ -z "$sid" ]]; then
+    fail "opencode:self-config create session"; abort_opencode "$dir"; return
+  fi
+  SCRATCH_SESSIONS+=("$sid")
+
+  oc_api "$OC_PORT" POST "/api/session/$sid/model" \
+    "{\"model\":{\"id\":\"${model#*/}\",\"providerID\":\"${model%%/*}\"}}" >/dev/null
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    '{"text":"TOPIC-ALPHA: the database schema. Reply with only: ok","delivery":"queue"}' >/dev/null; sleep 6
+  oc_api "$OC_PORT" POST "/api/session/$sid/prompt" \
+    '{"text":"TOPIC-BETA: the CSS color palette. Reply with only: ok","delivery":"queue"}' >/dev/null; sleep 6
+
+  # 1. The command must run and its buckets must be VISIBLE IN THE SESSION —
+  #    with no plugin env and a minimal PATH.
+  oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":""}' >/dev/null
+  sleep 8
+  local view; view="$(oc_session_text "$OC_PORT" "$sid")"
+  if grep -q 'Categories:' <<<"$view"; then
+    pass "opencode:self-config (no plugin env, minimal PATH: buckets visible in the session)"
+  else
+    fail "opencode:self-config" \
+      "with no CTXED_PLUGIN_* env and a minimal PATH the plugin produced no visible buckets"
+  fi
+
+  # 2. A selection must apply under the same conditions.
+  oc_api "$OC_PORT" POST "/api/session/$sid/command" '{"name":"ctxed-prune","text":"1"}' >/dev/null
+  sleep 8
+  local sel; sel="$(oc_session_text "$OC_PORT" "$sid")"
+  if grep -q 'Selected buckets' <<<"$sel"; then
+    pass "opencode:self-config selection (visible with no plugin env)"
+  else
+    fail "opencode:self-config selection" \
+      "no 'Selected buckets'; session said: $(tr '\n' ' ' <<<"$sel" | tail -c 300)"
+  fi
+
+  oc_api "$OC_PORT" DELETE "/api/session/$sid" >/dev/null 2>&1
+  SCRATCH_SESSIONS=()
+  stop_opencode_server "$dir"
+}
+
 claude_scenario() {
   need claude "Claude Code CLI, authenticated"
   # compact-instruction lives on the Claude Code branch. If this checkout does
@@ -886,6 +1021,7 @@ print(o.get("session_id") or o.get("sessionId") or "")' "$out" 2>/dev/null)"
 
 printf '\n===== functional verification\n'
 [[ $RUN_OPENCODE -eq 1 ]] && { echo "--- opencode"; opencode_scenario; }
+[[ $RUN_OPENCODE -eq 1 ]] && { echo "--- opencode (self-config, minimal env)"; opencode_selfconfig_scenario; }
 [[ $RUN_CLAUDE -eq 1 ]] && { echo "--- claude code"; claude_scenario; }
 printf '\n= %d passed, %d failed\n' "$PASSES" "$FAILURES"
 [[ $FAILURES -eq 0 ]]

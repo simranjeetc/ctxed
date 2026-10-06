@@ -48,14 +48,27 @@ The coordinator (main session) does three things and nothing more:
 2. Export it; `ctxed inspect` and `categorize` it (offline categorizer: the test
    feeds ctxed the real entry ids, so no model call is needed for this half).
 3. Resolve a bucket selection to dropped ids via `prune --ids-only`.
-4. **PENDING (tasks 4.1–4.4):** run the in-session command and the dispatch hook,
-   observe the outgoing request, and assert:
+4. Run the in-session command and the dispatch hook, and assert:
+   - **the buckets are visible in the session** — asserted on the session's
+     messages, not the server log. A command's `console.log` lands in the server
+     log, so asserting there passes even when the user sees nothing;
    - the selected bucket's messages are absent from the request;
    - a message added **after** selection, in a dropped bucket, is also absent
      (anti-drift);
    - stored history is unchanged and the session continues;
    - **id parity** — the ids ctxed categorizes over are the ids the hook filters.
      If this fails, the plugin must match on content/tool-id — the top risk.
+5. The categorizer stub sleeps ~3 s, like a real model, so the plugin's command
+   timeout is genuinely exercised.
+
+### OpenCode self-configuration — `--opencode` (second scenario)
+
+A second scenario starts the server the way a real install does: **minimal PATH,
+no `CTXED_PLUGIN_*` at all**. OpenCode's server runs as a launchd daemon with a
+minimal PATH, and a local plugin cannot take options from `opencode.json`. The
+plugin must resolve `ctxed` and a categorizer on its own, and its output must be
+visible in the session. Without this scenario a plugin that only works when the
+test supplies its configuration passes while the real install fails.
 
 ### Claude Code — `scripts/verify-functionally.sh --claude`
 
