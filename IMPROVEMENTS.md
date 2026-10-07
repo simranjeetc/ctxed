@@ -30,12 +30,12 @@ this file yourself.
 
 ## Before sharing
 
-- [ ] **T01 (manual) Create a public GitHub repo and push.**
+- [x] **T01 (manual) Create a public GitHub repo and push.**
   `git remote add origin <url> && git push -u origin main`.
 
-- [ ] **T02 (manual) Choose a license.** Tell the agent MIT or Apache-2.0.
+- [x] **T02 (manual) Choose a license.** Chosen: MIT.
 
-- [ ] **T03 (needs T02) Add the LICENSE file.** Put the chosen license text in `LICENSE`, with the copyright holder "Simranjeet Singh Chawla" and the year 2026.
+- [ ] **T03 (needs T02) Add the LICENSE file.** Put the MIT license text in `LICENSE`, with the copyright holder "Simranjeet Singh Chawla" and the year 2026.
   Check: `test -f LICENSE`
 
 - [x] **T04 gofmt the tree.** Run `gofmt -w .`; change nothing else.
