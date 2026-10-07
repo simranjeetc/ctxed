@@ -1,4 +1,4 @@
-// Command ctxed inspects and edits an agent session's context window.
+// Command ctxed shows what an agent session's context is made of.
 package main
 
 import (

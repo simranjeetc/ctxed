@@ -44,7 +44,7 @@ this file yourself.
 - [x] **T05 Fix the staticcheck finding.** `internal/harness/claude.go:21`: the error string starts with a capital letter (ST1005). Make it lowercase.
   Check: `~/go/bin/staticcheck ./...` prints nothing.
 
-- [ ] **T06 Fix the main.go doc comment.** `cmd/ctxed/main.go` says "inspects and edits"; ctxed is read-only now. Change it to "shows what an agent session's context is made of".
+- [x] **T06 Fix the main.go doc comment.** `cmd/ctxed/main.go` says "inspects and edits"; ctxed is read-only now. Change it to "shows what an agent session's context is made of".
   Check: `grep -q "made of" cmd/ctxed/main.go`.
 
 - [ ] **T07 Add a Makefile** with targets `build`, `test` (`go test -race ./...`), `lint` (gofmt check, `go vet`, staticcheck) and `install` (`go install ./cmd/ctxed`).
