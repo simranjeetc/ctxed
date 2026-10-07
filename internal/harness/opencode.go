@@ -101,7 +101,8 @@ func (c OpenCodeRun) Complete(ctx context.Context, prompt string) (string, error
 		model = OpenCodeModel
 	}
 	var out, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, bin, "run", "--format", "json", "--model", model, "--title", "ctxed categorize", prompt)
+	cmd := exec.CommandContext(ctx, bin, "run", "--format", "json", "--model", model, "--title", "ctxed categorize")
+	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()

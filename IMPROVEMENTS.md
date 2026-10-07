@@ -94,7 +94,7 @@ this file yourself.
 - [x] **T16 Bound the opencode cleanup.** In `internal/harness/opencode.go`, run `session delete` with a 10s deadline of its own that ignores the caller's cancellation — `context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)` — so the delete still runs when T13's Ctrl-C cancels `ctx`, and print a failure to stderr instead of discarding it.
   Check: `! grep -rn '_ = exec.Command' internal/harness && go test ./internal/harness && grep -qE 'WithoutCancel|context\.Background\(\)' internal/harness/opencode.go`
 
-- [ ] **T17 Send the prompt to opencode on stdin, not as an argument.** In `OpenCodeRun.Complete`, pass the prompt on stdin if `opencode run` accepts it; otherwise write it to a temp file and attach it with `--file`. Verify the CLI's behaviour with `opencode run --help` first.
+- [x] **T17 Send the prompt to opencode on stdin, not as an argument.** In `OpenCodeRun.Complete`, pass the prompt on stdin if `opencode run` accepts it; otherwise write it to a temp file and attach it with `--file`. Verify the CLI's behaviour with `opencode run --help` first.
   Check: `go test ./internal/harness && ! grep -n '"--title", "ctxed categorize", prompt)' internal/harness/opencode.go`
 
 - [ ] **T18 Add a `--no-model` flag** to `ctxed overview`. It skips the categorizer and prints only the "Whole session" sizes. Document it in the README and the usage text.
