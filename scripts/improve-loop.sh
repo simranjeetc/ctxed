@@ -4,14 +4,19 @@
 # Per task: an implementer model makes the change; this script runs the
 # checks; a different, read-only reviewer model judges the diff; only then does
 # the script tick the box and commit. Task text and checks come from HEAD, so
-# the implementer cannot change what "done" means. Stops at the first failure.
+# the implementer cannot change what "done" means. Stops at the first task
+# that fails all its attempts.
 #
 #   scripts/improve-loop.sh            # run until done or a failure
 #   scripts/improve-loop.sh -n 3       # at most 3 tasks
 #   scripts/improve-loop.sh --dry-run  # show the next task and its check
 #
 # Env: IMPROVE_MODEL (default haiku), REVIEW_MODEL (default sonnet),
-#      CLAUDE_BIN (default claude).
+#      IMPROVE_ATTEMPTS (default 3), CLAUDE_BIN (default claude).
+#
+# A failed check or review is retried from the committed tree, with the reason
+# passed to the next attempt; each failed attempt is kept in `git stash`. Rule
+# breaks (editing the backlog, committing) and blocks stop at once.
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
@@ -22,6 +27,7 @@ REVIEWER=${REVIEW_MODEL:-sonnet}
 CLAUDE=${CLAUDE_BIN:-claude}
 LOGDIR=.verify/improve
 MAX=1000
+ATTEMPTS=${IMPROVE_ATTEMPTS:-3}
 DRY=0
 
 while [ $# -gt 0 ]; do
@@ -73,10 +79,11 @@ dirty() {
 	git status --porcelain | grep -vE '^\?\? (show-me-.*\.html|\.verify/|\.archify/)'
 }
 
-# test_weight counts test functions minus skips, to catch deleted or skipped tests.
+# test_weight counts the tests a plain `go test ./...` runs, minus skips, to
+# catch tests that were deleted, skipped, or hidden behind a build tag.
 test_weight() {
 	local funcs skips
-	funcs=$(grep -rhE '^func (Test|Fuzz|Benchmark)' --include='*_test.go' . | wc -l)
+	funcs=$(go test -list . ./... 2>/dev/null | grep -cE '^(Test|Fuzz|Example)')
 	skips=$(grep -rhE '\bt\.Skip(Now|f)?\(' --include='*_test.go' . | wc -l)
 	echo $((funcs - skips))
 }
@@ -143,43 +150,82 @@ while [ "$done_count" -lt "$MAX" ]; do
 
 	log="$LOGDIR/$id.log"
 	verdict="$LOGDIR/$id.review"
-	rm -f "$LOGDIR/$id.blocked"
 	: >"$log"
 	head_before=$(git rev-parse HEAD)
 	weight_before=$(test_weight)
-	undo="git reset --hard $head_before && git clean -fd -e show-me-*.html -e .verify -e .archify"
 
+	# stop ends the run for problems a retry must not paper over.
 	stop() {
 		echo "✗ $id: $1" >&2
-		echo "  log: $log    review: git diff / git status    undo: $undo" >&2
+		echo "  log: $log    inspect: git diff / git status / git stash list" >&2
 		exit 1
 	}
 
-	# 1. Implement.
-	prompt="Read $FILE and follow the rules for the implementer. Do task $id only. Do not edit $FILE or $SELF, do not tick, stage or commit. Stop when the task's Check and go test pass."
-	echo "== implementer ($MODEL)" >>"$log"
-	"$CLAUDE" -p "$prompt" --model "$MODEL" \
-		--allowedTools "Read,Edit,Write,Glob,Grep,Bash" >>"$log" 2>&1 ||
-		stop "the implementer run failed"
+	# set_aside stashes a failed attempt (kept, never deleted) so the next
+	# attempt starts from the committed tree.
+	set_aside() {
+		git stash push -q -u -m "improve: $id attempt $1 ($MODEL) failed: $2" -- . ':!show-me-*.html' ||
+			stop "could not stash attempt $1"
+	}
 
-	# 2. Mechanical checks, against the committed spec.
-	[ -f "$LOGDIR/$id.blocked" ] && stop "implementer blocked: $(head -1 "$LOGDIR/$id.blocked")"
-	[ "$(git rev-parse HEAD)" = "$head_before" ] || stop "the implementer committed; only the script commits"
-	git diff --quiet HEAD -- "$FILE" "$SELF" || stop "the implementer edited $FILE or $SELF"
-	[ -n "$(dirty)" ] || stop "no changes made"
-	[ "$(test_weight)" -ge "$weight_before" ] || stop "tests were removed or skipped"
-	gates "$check" >>"$log" 2>&1 || stop "checks failed (gofmt/build/vet/test or the task check)"
+	feedback=""
+	passed=0
+	for attempt in $(seq 1 "$ATTEMPTS"); do
+		rm -f "$LOGDIR/$id.blocked"
+		echo "  attempt $attempt/$ATTEMPTS ($MODEL)"
 
-	# 3. Independent review by a different model.
-	echo "  reviewing ($REVIEWER)…"
-	review "$id" "$verdict"
-	git diff --quiet HEAD -- "$FILE" "$SELF" || stop "the review changed files"
-	line=$(grep -E '^VERDICT: ' "$verdict" | tail -1)
-	case $line in
-	"VERDICT: PASS") ;;
-	"VERDICT: FAIL"*) stop "reviewer: ${line#VERDICT: FAIL: } (see $verdict)" ;;
-	*) stop "reviewer gave no verdict (see $verdict)" ;;
-	esac
+		# 1. Implement.
+		prompt="Read $FILE and follow the rules for the implementer. Do task $id only. Do not edit $FILE or $SELF, do not tick, stage or commit. Stop when the task's Check and go test pass."
+		if [ -n "$feedback" ]; then
+			prompt="$prompt
+
+A previous attempt at this task was rejected and discarded; you start from the committed tree. Why it was rejected:
+$feedback"
+		fi
+		echo "== attempt $attempt: implementer ($MODEL)" >>"$log"
+		"$CLAUDE" -p "$prompt" --model "$MODEL" \
+			--allowedTools "Read,Edit,Write,Glob,Grep,Bash" >>"$log" 2>&1 ||
+			stop "the implementer run failed"
+
+		# 2. Rule breaks and blocks end the run; no retry.
+		[ -f "$LOGDIR/$id.blocked" ] && stop "implementer blocked: $(head -1 "$LOGDIR/$id.blocked")"
+		[ "$(git rev-parse HEAD)" = "$head_before" ] || stop "the implementer committed; only the script commits"
+		git diff --quiet HEAD -- "$FILE" "$SELF" || stop "the implementer edited $FILE or $SELF"
+
+		# 3. Mechanical checks, against the committed spec. Failures are retried.
+		reason=""
+		gate_out="$LOGDIR/$id.gates"
+		if [ -z "$(dirty)" ]; then
+			reason="no changes were made"
+		elif [ "$(test_weight)" -lt "$weight_before" ]; then
+			reason="fewer tests run under a plain 'go test ./...' than before ($(test_weight) < $weight_before): tests were removed, skipped, or hidden behind a build tag"
+		elif ! gates "$check" >"$gate_out" 2>&1; then
+			reason="checks failed; last lines of their output:
+$(tail -40 "$gate_out")"
+		fi
+		cat "$gate_out" >>"$log" 2>/dev/null
+
+		# 4. Independent review by a different model.
+		if [ -z "$reason" ]; then
+			echo "  reviewing ($REVIEWER)…"
+			review "$id" "$verdict"
+			git diff --quiet HEAD -- "$FILE" "$SELF" || stop "the review changed files"
+			line=$(grep -E '^VERDICT: ' "$verdict" | tail -1)
+			case $line in
+			"VERDICT: PASS") passed=1; break ;;
+			"VERDICT: FAIL"*) reason="the reviewer rejected it: ${line#VERDICT: FAIL: }
+Review:
+$(tail -40 "$verdict")" ;;
+			*) reason="the reviewer gave no verdict" ;;
+			esac
+		fi
+
+		echo "  ✗ attempt $attempt: $(head -1 <<<"$reason")"
+		echo "$reason" >>"$log"
+		set_aside "$attempt" "$(head -1 <<<"$reason")"
+		feedback=$reason
+	done
+	[ "$passed" = 1 ] || stop "failed $ATTEMPTS attempts; each is kept in git stash"
 
 	# 4. Tick and commit: the only writes to the backlog.
 	sed -i.bak -E "s/^- \[ \] \*\*$id /- [x] **$id /" "$FILE" && rm -f "$FILE.bak"

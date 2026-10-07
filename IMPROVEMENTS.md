@@ -59,8 +59,8 @@ this file yourself.
 - [x] **T10 Add GoReleaser.** Add `.goreleaser.yaml` (darwin and linux, amd64 and arm64, with ldflags setting the version from T09) and `.github/workflows/release.yml`, which runs it on `v*` tags.
   Check: `test -f .goreleaser.yaml && test -f .github/workflows/release.yml`
 
-- [ ] **T11 Keep the parked code out of the binary.** Add `//go:build parked` to the parked command files and their tests in `internal/cli` (runDrop, runPrune, runCompactInstruction, the opencode command and `export_test.go`), splitting `cli.go` first if needed. Live commands must not import `prune`, `compact` or `ocprune`.
-  Check: `! go list -deps ./cmd/ctxed | grep -qE 'internal/(prune|compact|ocprune)' && go test -tags parked ./...`
+- [ ] **T11 Keep the parked code out of the binary.** In `internal/cli`, move the parked commands (runDrop, runPrune, runCompactInstruction and their helpers) out of `cli.go` into a new `parked.go`. Put `//go:build parked` on `parked.go`, `opencode.go`, `opencode_test.go` and `export_test.go`. Split `cli_test.go`: tests that call the parked commands through `RunWithParked` go to `parked_test.go` under the same tag. Every other test (usage, version, inspect, categorize, stdin) stays untagged, and so does the blank import of `internal/adapter/builtin` that the tests rely on. Live code must not import `prune`, `compact` or `ocprune`.
+  Check: `! go list -deps ./cmd/ctxed | grep -qE 'internal/(prune|compact|ocprune)' && go test ./internal/cli && go test -tags parked ./... && go vet -tags parked ./... && test -z "$(gofmt -l internal/cli)"`
 
 ## Correctness
 
