@@ -25,6 +25,10 @@ Rules for the implementer:
    you create starts with a bare `package cli`; a package keeps exactly one
    package doc comment, in the file that already had it. Copy nothing else
    (imports are re-derived by the tools).
+7. Teardown must not inherit the caller's cancellation. When you put a deadline
+   on cleanup (a session delete, a temp-file removal), derive it from
+   `context.WithoutCancel(ctx)`, not from `ctx`: cleanup runs precisely when the
+   caller was interrupted or timed out.
 
 Tasks marked `(manual)` need the owner. Skip a task marked `(needs Txx)`
 while Txx is unticked. Change a task or its Check only by editing and committing
@@ -87,8 +91,8 @@ this file yourself.
 - [x] **T15 Handle the ReadAll error** in `internal/model/model.go` (`raw, _ := io.ReadAll(...)`).
   Check: `! grep -n 'raw, _ :=' internal/model/model.go`
 
-- [ ] **T16 Bound the opencode cleanup.** In `internal/harness/opencode.go`, run `session delete` with a 10s context and print a failure to stderr instead of discarding it.
-  Check: `! grep -rn '_ = exec.Command' internal/harness`
+- [ ] **T16 Bound the opencode cleanup.** In `internal/harness/opencode.go`, run `session delete` with a 10s deadline of its own that ignores the caller's cancellation — `context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)` — so the delete still runs when T13's Ctrl-C cancels `ctx`, and print a failure to stderr instead of discarding it.
+  Check: `! grep -rn '_ = exec.Command' internal/harness && go test ./internal/harness && grep -qE 'WithoutCancel|context\.Background\(\)' internal/harness/opencode.go`
 
 - [ ] **T17 Send the prompt to opencode on stdin, not as an argument.** In `OpenCodeRun.Complete`, pass the prompt on stdin if `opencode run` accepts it; otherwise write it to a temp file and attach it with `--file`. Verify the CLI's behaviour with `opencode run --help` first.
   Check: `go test ./internal/harness && ! grep -n '"--title", "ctxed categorize", prompt)' internal/harness/opencode.go`
