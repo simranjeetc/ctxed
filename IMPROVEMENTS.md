@@ -78,7 +78,7 @@ this file yourself.
 - [x] **T12 Accept a single topic.** `categorize.Parse` rejects fewer than 2 categories ("at least 2 are required"). Allow 1. Update the prompt text and tests to match.
   Check: `go test ./internal/categorize`
 
-- [ ] **T13 Cancel on Ctrl-C.** In `cmd/ctxed/main.go`, create a context with `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)` and pass it down, replacing `context.Background()` in `internal/cli/overview.go`.
+- [x] **T13 Cancel on Ctrl-C.** In `cmd/ctxed/main.go`, create a context with `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)` and pass it down, replacing `context.Background()` in `internal/cli/overview.go`.
   Check: `grep -q NotifyContext cmd/ctxed/main.go`.
 
 - [ ] **T14 Wrap errors with %w.** In `internal/harness/*.go` and `internal/model/model.go`, change `fmt.Errorf(... %v ..., err)` to `%w` wherever an error value is wrapped.

@@ -42,12 +42,19 @@ func init() {
 
 // Run dispatches a command and returns its exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
-	return RunWithStdin(args, os.Stdin, stdout, stderr)
+	return RunContext(context.Background(), args, os.Stdin, stdout, stderr)
 }
 
 // RunWithStdin is Run with an explicit stdin, so a transcript can be piped in
 // (`ctxed categorize - …`) and tests can supply one without touching the OS.
 func RunWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return RunContext(context.Background(), args, stdin, stdout, stderr)
+}
+
+// RunContext is RunWithStdin with a caller-supplied context, so the session
+// read and the model call are cancelled when the user interrupts (Ctrl-C or
+// SIGTERM).
+func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		usage(stderr)
 		return ExitUsage
@@ -57,7 +64,7 @@ func RunWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	// stays in this package but no command reaches it. See
 	// openspec/changes/context-overview.
 	case "overview":
-		return runOverview(args[1:], stdout, stderr)
+		return runOverview(ctx, args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
 	case "categorize":

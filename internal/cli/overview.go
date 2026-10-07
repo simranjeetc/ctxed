@@ -21,7 +21,7 @@ var valueFlagsOverview = map[string]bool{"session": true, "categorizer-cmd": tru
 
 // runOverview reports what the live context of a session is made of. It reads
 // the session and asks a model to name the topics; it changes nothing.
-func runOverview(args []string, stdout, stderr io.Writer) int {
+func runOverview(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("overview", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	sessionFlag := fs.String("session", "", "Claude Code session UUID or OpenCode ses_ id (default: from the environment)")
@@ -44,7 +44,7 @@ func runOverview(args []string, stdout, stderr io.Writer) int {
 		file = rest[0]
 	}
 
-	src, code := findSession(file, *sessionFlag, stderr)
+	src, code := findSession(ctx, file, *sessionFlag, stderr)
 	if code != ExitOK {
 		return code
 	}
@@ -64,7 +64,7 @@ func runOverview(args []string, stdout, stderr io.Writer) int {
 	var f categorize.File
 	topics := overview.Topics(doc)
 	if len(topics.Entries) >= 2 {
-		f, err = categorizeTopics(topics, doc.Source, *cmd, *maxCats, *maxInput, tok)
+		f, err = categorizeTopics(ctx, topics, doc.Source, *cmd, *maxCats, *maxInput, tok)
 		if err != nil {
 			// The sizes are still worth showing; only the topic names are missing.
 			fmt.Fprintf(stderr, "ctxed overview: topics unavailable: %v\n", err)
@@ -86,7 +86,7 @@ type sessionSource struct {
 
 // findSession resolves the session: a file argument, else --session, else the
 // id the running harness puts in the environment of every shell command.
-func findSession(file, id string, stderr io.Writer) (sessionSource, int) {
+func findSession(ctx context.Context, file, id string, stderr io.Writer) (sessionSource, int) {
 	if file != "" {
 		return sessionSource{name: file, read: func() ([]byte, error) { return os.ReadFile(file) }}, ExitOK
 	}
@@ -111,7 +111,7 @@ func findSession(file, id string, stderr io.Writer) (sessionSource, int) {
 			return sessionSource{}, ExitUsage
 		}
 		return sessionSource{name: id, read: func() ([]byte, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer cancel()
 			return harness.ExportOpenCode(ctx, id)
 		}}, ExitOK
@@ -132,7 +132,7 @@ func findSession(file, id string, stderr io.Writer) (sessionSource, int) {
 // categorizeTopics asks a model to group the entries into topics. The model is
 // --categorizer-cmd, else $CTXED_CATEGORIZER_CMD, else the harness's own CLI
 // (`claude -p` or `opencode run`) with $CTXED_CATEGORIZER_MODEL.
-func categorizeTopics(doc *session.Document, source, cmd string, maxCats, maxInput int, tok tokenize.Tokenizer) (categorize.File, error) {
+func categorizeTopics(ctx context.Context, doc *session.Document, source, cmd string, maxCats, maxInput int, tok tokenize.Tokenizer) (categorize.File, error) {
 	var client model.Client
 	if c := envOr(cmd, "CTXED_CATEGORIZER_CMD"); strings.TrimSpace(c) != "" {
 		var err error
@@ -144,7 +144,7 @@ func categorizeTopics(doc *session.Document, source, cmd string, maxCats, maxInp
 	} else {
 		client = harness.ClaudePrint{Model: os.Getenv("CTXED_CATEGORIZER_MODEL")}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	text, err := client.Complete(ctx, categorize.Prompt(doc, maxCats, maxInput))
 	if err != nil {
