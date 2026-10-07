@@ -1,5 +1,7 @@
 # ctxed
 
+[![CI](https://github.com/simranjeetc/ctxed/actions/workflows/ci.yml/badge.svg)](https://github.com/simranjeetc/ctxed/actions/workflows/ci.yml)
+
 See what an agent session's context is made of: which topics it holds, how many
 tokens each takes, which are done, and what is still pending. Works the same in
 Claude Code and OpenCode. Read-only: ctxed never changes a session.
@@ -20,6 +22,8 @@ Not counted: 690 messages from before the last compaction.
 ```
 
 You decide what to do with it: carry on, compact, or start a new session.
+
+![demo](docs/demo.gif)
 
 ## Inside a session: the `ctxed-overview` skill
 
@@ -45,7 +49,7 @@ There is no plugin and nothing in the request path.
 ### Install
 
 ```sh
-go install ./cmd/ctxed                                     # ~/go/bin/ctxed
+go install github.com/simranjeetc/ctxed/cmd/ctxed@latest   # ~/go/bin/ctxed
 ln -s "$PWD/skills/ctxed-overview" ~/.claude/skills/        # Claude Code
 mkdir -p ~/.config/opencode/skills/ctxed-overview \
   && cp skills/ctxed-overview/SKILL.md ~/.config/opencode/skills/ctxed-overview/   # OpenCode

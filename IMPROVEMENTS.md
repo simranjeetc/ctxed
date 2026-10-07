@@ -143,5 +143,5 @@ this file yourself.
 - [x] **T31 Add a CHANGELOG.md** in Keep a Changelog format, with a `0.1.0` entry summarising `ctxed overview`, `inspect` and `categorize`.
   Check: `test -f CHANGELOG.md`
 
-- [ ] **T32 Improve the README for sharing.** Add a CI badge (after T08), a line `go install github.com/simranjeetc/ctxed/cmd/ctxed@latest`, and a placeholder for a demo GIF at `docs/demo.gif`.
+- [x] **T32 Improve the README for sharing.** Add a CI badge (after T08), a line `go install github.com/simranjeetc/ctxed/cmd/ctxed@latest`, and a placeholder for a demo GIF at `docs/demo.gif`.
   Check: `grep -q 'go install github.com' README.md`
