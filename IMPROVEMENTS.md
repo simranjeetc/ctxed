@@ -38,7 +38,7 @@ this file yourself.
 - [ ] **T03 (needs T02) Add the LICENSE file.** Put the chosen license text in `LICENSE`, with the copyright holder "Simranjeet Singh Chawla" and the year 2026.
   Check: `test -f LICENSE`
 
-- [ ] **T04 gofmt the tree.** Run `gofmt -w .`; change nothing else.
+- [x] **T04 gofmt the tree.** Run `gofmt -w .`; change nothing else.
   Check: `test -z "$(gofmt -l .)"`.
 
 - [ ] **T05 Fix the staticcheck finding.** `internal/harness/claude.go:21`: the error string starts with a capital letter (ST1005). Make it lowercase.

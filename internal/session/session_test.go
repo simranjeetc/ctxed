@@ -12,7 +12,7 @@ func TestAssignFallbackIDsIsDeterministic(t *testing.T) {
 		d.Add(&session.Entry{Role: "user", Kind: session.KindMessage, Text: "hello world"})
 		d.Add(&session.Entry{Role: "assistant", Kind: session.KindMessage, Text: "hi there"})
 		d.Add(&session.Entry{Role: "assistant", Kind: session.KindMessage, Text: "hi there"}) // duplicate content
-		d.Add(&session.Entry{Role: "user", Kind: session.KindMessage, Text: "hello world"})  // duplicate content
+		d.Add(&session.Entry{Role: "user", Kind: session.KindMessage, Text: "hello world"})   // duplicate content
 		d.AssignFallbackIDs()
 		return d
 	}

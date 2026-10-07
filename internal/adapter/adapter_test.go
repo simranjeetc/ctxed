@@ -12,10 +12,12 @@ import (
 // fakeAdapter proves the registry is the only source of supported formats.
 type fakeAdapter struct{}
 
-func (fakeAdapter) Name() string                                       { return "zz-fake" }
-func (fakeAdapter) Detect(data []byte) bool                            { return strings.HasPrefix(string(data), "FAKE") }
-func (fakeAdapter) Parse([]byte) (*session.Document, error)            { return &session.Document{Source: "zz-fake"}, nil }
-func (fakeAdapter) Write(*session.Document) ([]byte, error)            { return []byte("FAKE"), nil }
+func (fakeAdapter) Name() string            { return "zz-fake" }
+func (fakeAdapter) Detect(data []byte) bool { return strings.HasPrefix(string(data), "FAKE") }
+func (fakeAdapter) Parse([]byte) (*session.Document, error) {
+	return &session.Document{Source: "zz-fake"}, nil
+}
+func (fakeAdapter) Write(*session.Document) ([]byte, error) { return []byte("FAKE"), nil }
 
 var minimalOpencode = []byte(`{"info":{"id":"ses_1"},"messages":[{"type":"user","text":"hi"}]}`)
 

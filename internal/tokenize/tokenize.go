@@ -20,7 +20,7 @@ type Tokenizer interface {
 // the 5-rune string "abcde" counts as 2 tokens.
 type Approximation struct{}
 
-func (Approximation) Name() string     { return "approximation" }
+func (Approximation) Name() string      { return "approximation" }
 func (Approximation) Approximate() bool { return true }
 func (Approximation) Count(s string) int {
 	if s == "" {
