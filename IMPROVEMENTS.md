@@ -140,7 +140,7 @@ this file yourself.
 - [x] **T30 Tidy the repo root.** Add `show-me-*.html` to `.gitignore`. Do not delete the files.
   Check: `! git status --short | grep -q show-me`
 
-- [ ] **T31 Add a CHANGELOG.md** in Keep a Changelog format, with a `0.1.0` entry summarising `ctxed overview`, `inspect` and `categorize`.
+- [x] **T31 Add a CHANGELOG.md** in Keep a Changelog format, with a `0.1.0` entry summarising `ctxed overview`, `inspect` and `categorize`.
   Check: `test -f CHANGELOG.md`
 
 - [ ] **T32 Improve the README for sharing.** Add a CI badge (after T08), a line `go install github.com/simranjeetc/ctxed/cmd/ctxed@latest`, and a placeholder for a demo GIF at `docs/demo.gif`.
