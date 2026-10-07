@@ -18,7 +18,7 @@ const ClaudeModel = "haiku"
 var claudeSessionRe = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
 
 // ErrBadClaudeSession reports a session id that cannot safely name a file.
-var ErrBadClaudeSession = errors.New("Claude Code session id must be a UUID")
+var ErrBadClaudeSession = errors.New("claude code session id must be a UUID")
 
 // ValidClaudeSession checks a Claude Code session id before it names a file.
 func ValidClaudeSession(id string) error {

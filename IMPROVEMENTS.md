@@ -41,7 +41,7 @@ this file yourself.
 - [x] **T04 gofmt the tree.** Run `gofmt -w .`; change nothing else.
   Check: `test -z "$(gofmt -l .)"`.
 
-- [ ] **T05 Fix the staticcheck finding.** `internal/harness/claude.go:21`: the error string starts with a capital letter (ST1005). Make it lowercase.
+- [x] **T05 Fix the staticcheck finding.** `internal/harness/claude.go:21`: the error string starts with a capital letter (ST1005). Make it lowercase.
   Check: `~/go/bin/staticcheck ./...` prints nothing.
 
 - [ ] **T06 Fix the main.go doc comment.** `cmd/ctxed/main.go` says "inspects and edits"; ctxed is read-only now. Change it to "shows what an agent session's context is made of".
