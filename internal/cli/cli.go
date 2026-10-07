@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,7 +32,18 @@ const (
 	ExitRefused = 3 // refused: invalid or unsafe edit
 )
 
-const version = "0.1.0"
+// version is set at build time with: go install -ldflags "-X github.com/simranjeetc/ctxed/internal/cli.version=X.Y.Z"
+// If version is still "dev" at runtime, it is read from the module version in debug.ReadBuildInfo().
+var version = "dev"
+
+func init() {
+	if version == "dev" {
+		bi, ok := debug.ReadBuildInfo()
+		if ok && bi.Main.Version != "(devel)" {
+			version = bi.Main.Version
+		}
+	}
+}
 
 // Run dispatches a command and returns its exit code.
 func Run(args []string, stdout, stderr io.Writer) int {

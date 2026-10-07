@@ -53,7 +53,7 @@ this file yourself.
 - [x] **T08 Add CI.** Create `.github/workflows/ci.yml`. On push and pull_request it runs on ubuntu-latest with Go from `go.mod`, then a gofmt check, `go vet ./...`, staticcheck (`dominikh/staticcheck-action`), `go test -race ./...` and `govulncheck ./...`.
   Check: `test -f .github/workflows/ci.yml && grep -q "go test -race" .github/workflows/ci.yml`
 
-- [ ] **T09 Set the version at build time.** In `internal/cli/cli.go`, change `const version = "0.1.0"` to `var version = "dev"`. If it is still "dev", read the module version from `debug.ReadBuildInfo()`. Document `-ldflags "-X github.com/simranjeetc/ctxed/internal/cli.version=…"` in a comment.
+- [x] **T09 Set the version at build time.** In `internal/cli/cli.go`, change `const version = "0.1.0"` to `var version = "dev"`. If it is still "dev", read the module version from `debug.ReadBuildInfo()`. Document `-ldflags "-X github.com/simranjeetc/ctxed/internal/cli.version=…"` in a comment.
   Check: `go run ./cmd/ctxed version | grep -qE 'dev|devel'`
 
 - [ ] **T10 Add GoReleaser.** Add `.goreleaser.yaml` (darwin and linux, amd64 and arm64, with ldflags setting the version from T09) and `.github/workflows/release.yml`, which runs it on `v*` tags.
