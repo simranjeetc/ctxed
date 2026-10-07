@@ -91,7 +91,7 @@ this file yourself.
 - [x] **T15 Handle the ReadAll error** in `internal/model/model.go` (`raw, _ := io.ReadAll(...)`).
   Check: `! grep -n 'raw, _ :=' internal/model/model.go`
 
-- [ ] **T16 Bound the opencode cleanup.** In `internal/harness/opencode.go`, run `session delete` with a 10s deadline of its own that ignores the caller's cancellation — `context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)` — so the delete still runs when T13's Ctrl-C cancels `ctx`, and print a failure to stderr instead of discarding it.
+- [x] **T16 Bound the opencode cleanup.** In `internal/harness/opencode.go`, run `session delete` with a 10s deadline of its own that ignores the caller's cancellation — `context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)` — so the delete still runs when T13's Ctrl-C cancels `ctx`, and print a failure to stderr instead of discarding it.
   Check: `! grep -rn '_ = exec.Command' internal/harness && go test ./internal/harness && grep -qE 'WithoutCancel|context\.Background\(\)' internal/harness/opencode.go`
 
 - [ ] **T17 Send the prompt to opencode on stdin, not as an argument.** In `OpenCodeRun.Complete`, pass the prompt on stdin if `opencode run` accepts it; otherwise write it to a temp file and attach it with `--file`. Verify the CLI's behaviour with `opencode run --help` first.

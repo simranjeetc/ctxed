@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // OpenCodeModel is the categorizer model when none is configured: an OpenCode
@@ -106,7 +107,13 @@ func (c OpenCodeRun) Complete(ctx context.Context, prompt string) (string, error
 	runErr := cmd.Run()
 	text, sessionID := parseRunEvents(out.Bytes())
 	if sessionID != "" && ValidOpenCodeSession(sessionID) == nil {
-		_ = exec.Command(bin, "session", "delete", sessionID).Run()
+		deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		del := exec.CommandContext(deleteCtx, bin, "session", "delete", sessionID)
+		del.Stderr = os.Stderr
+		if err := del.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "opencode session delete %s: %v\n", sessionID, err)
+		}
 	}
 	if runErr != nil {
 		return "", fmt.Errorf("opencode run (%s): %w: %s", model, runErr, strings.TrimSpace(stderr.String()))
