@@ -35,7 +35,7 @@ this file yourself.
 
 - [x] **T02 (manual) Choose a license.** Chosen: MIT.
 
-- [ ] **T03 (needs T02) Add the LICENSE file.** Put the MIT license text in `LICENSE`, with the copyright holder "Simranjeet Singh Chawla" and the year 2026.
+- [x] **T03 (needs T02) Add the LICENSE file.** Put the MIT license text in `LICENSE`, with the copyright holder "Simranjeet Singh Chawla" and the year 2026.
   Check: `test -f LICENSE`
 
 - [x] **T04 gofmt the tree.** Run `gofmt -w .`; change nothing else.
