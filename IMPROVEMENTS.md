@@ -117,7 +117,7 @@ this file yourself.
 - [x] **T23 Tests for `internal/inspect`.**
   Check: `go test -cover ./internal/inspect | grep -qE 'coverage: ([7-9][0-9]|100)'`
 
-- [ ] **T24 Raise coverage for `internal/session` and `internal/tokenize`.**
+- [x] **T24 Raise coverage for `internal/session` and `internal/tokenize`.**
   Check: `go test -cover ./internal/session ./internal/tokenize | grep -cE 'coverage: (7[5-9]|[89][0-9]|100)' | grep -qx 2`
 
 - [ ] **T25 Fuzz the adapters.** Add `FuzzParse` to `internal/adapter/claude` and `internal/adapter/opencode`, seeded from `testdata/`; Parse must never panic.
