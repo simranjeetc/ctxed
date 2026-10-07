@@ -108,7 +108,7 @@ this file yourself.
 - [x] **T20 Unit tests for `internal/overview`.** Write table-driven tests for `Build` (placement, nearest-entry fallback, the summary row, sorting) and `Short`.
   Check: `go test -cover ./internal/overview | grep -qE 'coverage: ([89][0-9]|100)'`
 
-- [ ] **T21 Golden-file test for the overview table.** Save the rendered table as `internal/overview/testdata/table.golden`, compare against it, and regenerate it when `-update` is passed.
+- [x] **T21 Golden-file test for the overview table.** Save the rendered table as `internal/overview/testdata/table.golden`, compare against it, and regenerate it when `-update` is passed.
   Check: `test -f internal/overview/testdata/table.golden && go test ./internal/overview`
 
 - [ ] **T22 Tests for `internal/harness`.** Put a fake `opencode` and a fake `claude` shell script on a temp PATH, then test `OpenCodeBin`, `ExportOpenCode`, `ClaudePrint.Complete` and `ClaudeTranscript`.
