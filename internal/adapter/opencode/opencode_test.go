@@ -2,7 +2,9 @@ package opencode_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/simranjeetc/ctxed/internal/adapter/opencode"
@@ -174,4 +176,52 @@ func FuzzParse(f *testing.F) {
 		// Parse must never panic on arbitrary input.
 		_, _ = (&opencode.Adapter{}).Parse(data)
 	})
+}
+
+// generateSession builds a synthetic n-message OpenCode export: an info object
+// plus n alternating user/assistant messages, each carrying a realistic
+// multi-token body. It exercises the same code paths as a real export without
+// needing a fixture on disk.
+func generateSession(n int) []byte {
+	msgs := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		m := map[string]any{
+			"id":   fmt.Sprintf("msg-%06d", i),
+			"type": role,
+		}
+		if role == "user" {
+			m["text"] = benchmarkBody(i)
+		} else {
+			m["content"] = []map[string]any{{"type": "text", "text": benchmarkBody(i)}}
+		}
+		msgs = append(msgs, m)
+	}
+	top := map[string]any{
+		"info":     map[string]any{"id": "ses_bench"},
+		"messages": msgs,
+	}
+	data, err := json.Marshal(top)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func benchmarkBody(i int) string {
+	return fmt.Sprintf("message %d about context windows: %s", i, strings.Repeat("token ", 40))
+}
+
+func BenchmarkParse(b *testing.B) {
+	data := generateSession(2000)
+	a := &opencode.Adapter{}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := a.Parse(data); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

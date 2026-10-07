@@ -123,7 +123,7 @@ this file yourself.
 - [x] **T25 Fuzz the adapters.** Add `FuzzParse` to `internal/adapter/claude` and `internal/adapter/opencode`, seeded from `testdata/`; Parse must never panic.
   Check: `go test -run=^$ -fuzz=FuzzParse -fuzztime=20s ./internal/adapter/claude && go test -run=^$ -fuzz=FuzzParse -fuzztime=20s ./internal/adapter/opencode`
 
-- [ ] **T26 Benchmarks.** Add `BenchmarkParse` (both adapters) and `BenchmarkCount` (tokenize) on a generated 2,000-message session.
+- [x] **T26 Benchmarks.** Add `BenchmarkParse` (both adapters) and `BenchmarkCount` (tokenize) on a generated 2,000-message session.
   Check: `go test -run=^$ -bench=. -benchtime=1x ./internal/... | grep -q Benchmark`
 
 ## Hygiene
