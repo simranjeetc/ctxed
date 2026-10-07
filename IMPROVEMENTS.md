@@ -56,7 +56,7 @@ this file yourself.
 - [x] **T09 Set the version at build time.** In `internal/cli/cli.go`, change `const version = "0.1.0"` to `var version = "dev"`. If it is still "dev", read the module version from `debug.ReadBuildInfo()`. Document `-ldflags "-X github.com/simranjeetc/ctxed/internal/cli.version=…"` in a comment.
   Check: `go run ./cmd/ctxed version | grep -qE 'dev|devel'`
 
-- [ ] **T10 Add GoReleaser.** Add `.goreleaser.yaml` (darwin and linux, amd64 and arm64, with ldflags setting the version from T09) and `.github/workflows/release.yml`, which runs it on `v*` tags.
+- [x] **T10 Add GoReleaser.** Add `.goreleaser.yaml` (darwin and linux, amd64 and arm64, with ldflags setting the version from T09) and `.github/workflows/release.yml`, which runs it on `v*` tags.
   Check: `test -f .goreleaser.yaml && test -f .github/workflows/release.yml`
 
 - [ ] **T11 Keep the parked code out of the binary.** Add `//go:build parked` to the parked command files and their tests in `internal/cli` (runDrop, runPrune, runCompactInstruction, the opencode command and `export_test.go`), splitting `cli.go` first if needed. Live commands must not import `prune`, `compact` or `ocprune`.

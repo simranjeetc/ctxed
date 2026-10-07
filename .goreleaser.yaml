@@ -1,0 +1,16 @@
+version: 2
+
+project_name: ctxed
+
+builds:
+  - id: ctxed
+    main: ./cmd/ctxed
+    binary: ctxed
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -X github.com/simranjeetc/ctxed/internal/cli.version={{.Version}}
