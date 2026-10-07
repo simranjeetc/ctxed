@@ -50,7 +50,7 @@ this file yourself.
 - [x] **T07 Add a Makefile** with targets `build`, `test` (`go test -race ./...`), `lint` (gofmt check, `go vet`, staticcheck) and `install` (`go install ./cmd/ctxed`).
   Check: `make lint test`.
 
-- [ ] **T08 Add CI.** Create `.github/workflows/ci.yml`. On push and pull_request it runs on ubuntu-latest with Go from `go.mod`, then a gofmt check, `go vet ./...`, staticcheck (`dominikh/staticcheck-action`), `go test -race ./...` and `govulncheck ./...`.
+- [x] **T08 Add CI.** Create `.github/workflows/ci.yml`. On push and pull_request it runs on ubuntu-latest with Go from `go.mod`, then a gofmt check, `go vet ./...`, staticcheck (`dominikh/staticcheck-action`), `go test -race ./...` and `govulncheck ./...`.
   Check: `test -f .github/workflows/ci.yml && grep -q "go test -race" .github/workflows/ci.yml`
 
 - [ ] **T09 Set the version at build time.** In `internal/cli/cli.go`, change `const version = "0.1.0"` to `var version = "dev"`. If it is still "dev", read the module version from `debug.ReadBuildInfo()`. Document `-ldflags "-X github.com/simranjeetc/ctxed/internal/cli.version=…"` in a comment.
