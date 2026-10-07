@@ -2,7 +2,9 @@ package opencode_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/simranjeetc/ctxed/internal/adapter/opencode"
@@ -91,7 +93,9 @@ func TestUnknownFieldsSurviveRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]json.RawMessage
-	json.Unmarshal(out, &got)
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
 	var custom struct {
 		Keep string `json:"keep"`
 	}
@@ -120,7 +124,9 @@ func TestNonEntryMessagePreservedOnWrite(t *testing.T) {
 			Type string `json:"type"`
 		} `json:"messages"`
 	}
-	json.Unmarshal(out, &got)
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
 	if len(got.Messages) != 1 || got.Messages[0].Type != "idle" {
 		t.Fatalf("expected only the idle message to remain, got %+v", got.Messages)
 	}
@@ -161,5 +167,65 @@ func TestParseCompactedShowsLiveContext(t *testing.T) {
 	var top struct{ Messages []json.RawMessage }
 	if err := json.Unmarshal(out, &top); err != nil || len(top.Messages) != 6 {
 		t.Fatalf("write kept %d items (%v), want 6", len(top.Messages), err)
+	}
+}
+
+func FuzzParse(f *testing.F) {
+	data, err := os.ReadFile(fixture)
+	if err != nil {
+		f.Fatalf("read seed %s: %v", fixture, err)
+	}
+	f.Add(data)
+	f.Fuzz(func(_ *testing.T, data []byte) {
+		// Parse must never panic on arbitrary input.
+		_, _ = (&opencode.Adapter{}).Parse(data)
+	})
+}
+
+// generateSession builds a synthetic n-message OpenCode export: an info object
+// plus n alternating user/assistant messages, each carrying a realistic
+// multi-token body. It exercises the same code paths as a real export without
+// needing a fixture on disk.
+func generateSession(n int) []byte {
+	msgs := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		m := map[string]any{
+			"id":   fmt.Sprintf("msg-%06d", i),
+			"type": role,
+		}
+		if role == "user" {
+			m["text"] = benchmarkBody(i)
+		} else {
+			m["content"] = []map[string]any{{"type": "text", "text": benchmarkBody(i)}}
+		}
+		msgs = append(msgs, m)
+	}
+	top := map[string]any{
+		"info":     map[string]any{"id": "ses_bench"},
+		"messages": msgs,
+	}
+	data, err := json.Marshal(top)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func benchmarkBody(i int) string {
+	return fmt.Sprintf("message %d about context windows: %s", i, strings.Repeat("token ", 40))
+}
+
+func BenchmarkParse(b *testing.B) {
+	data := generateSession(2000)
+	a := &opencode.Adapter{}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := a.Parse(data); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

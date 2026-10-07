@@ -1,6 +1,8 @@
 package claude_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -190,6 +192,64 @@ func TestCompactedRoundTripKeepsPreBoundaryLines(t *testing.T) {
 	for i := 0; i <= boundary; i++ {
 		if got[i] != in[i] {
 			t.Fatalf("pre-boundary line %d changed", i)
+		}
+	}
+}
+
+func FuzzParse(f *testing.F) {
+	for _, path := range []string{fixture, compactedFixture} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			f.Fatalf("read seed %s: %v", path, err)
+		}
+		f.Add(data)
+	}
+	f.Fuzz(func(_ *testing.T, data []byte) {
+		// Parse must never panic on arbitrary input.
+		_, _ = (&claude.Adapter{}).Parse(data)
+	})
+}
+
+// generateSession builds a synthetic n-message Claude Code transcript: a
+// leading ai-title line, then alternating user/assistant messages, each carrying
+// a realistic multi-token body. It exercises the same code paths as a real
+// transcript without needing a fixture on disk.
+func generateSession(n int) []byte {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	_ = enc.Encode(map[string]any{
+		"type":      "ai-title",
+		"aiTitle":   "generated benchmark session",
+		"sessionId": "bench",
+	})
+	for i := 0; i < n; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		_ = enc.Encode(map[string]any{
+			"type": role,
+			"uuid": fmt.Sprintf("msg-%06d", i),
+			"message": map[string]any{
+				"role":    role,
+				"content": benchmarkBody(i),
+			},
+		})
+	}
+	return []byte(b.String())
+}
+
+func benchmarkBody(i int) string {
+	return fmt.Sprintf("message %d about context windows: %s", i, strings.Repeat("token ", 40))
+}
+
+func BenchmarkParse(b *testing.B) {
+	data := generateSession(2000)
+	a := &claude.Adapter{}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := a.Parse(data); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

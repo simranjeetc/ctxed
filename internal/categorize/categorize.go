@@ -65,10 +65,10 @@ type File struct {
 // represented, and the per-entry snippet is shortened to fit the remaining
 // budget. Entries left out are reported as uncategorized by Parse; naming the
 // session's topics needs a representative view, not every entry.
-func Prompt(doc *session.Document, max int, maxBytes int) string {
+func Prompt(doc *session.Document, maxCats int, maxBytes int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are given the entries of a working session, oldest first.\n")
-	fmt.Fprintf(&b, "Group them into between 2 and %d high-level categories that describe what the session is about\n", max)
+	fmt.Fprintf(&b, "Group them into between 1 and %d high-level categories that describe what the session is about\n", maxCats)
 	fmt.Fprintf(&b, "(for example \"Claude Code adapter work\", \"OpenCode investigation\").\n")
 	fmt.Fprintf(&b, "Refer to entries by their [number]; give a run of consecutive entries as a range like \"4-17\".\n")
 	fmt.Fprintf(&b, "Assign every entry to exactly one category.\n")
@@ -170,9 +170,9 @@ type modelResponse struct {
 
 // Parse turns a model response into a validated File, resolving ids against the
 // session and enforcing the category bounds.
-func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) (File, error) {
-	if max < 2 {
-		max = 2
+func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, maxCats int) (File, error) {
+	if maxCats < 1 {
+		maxCats = 1
 	}
 	raw, err := extractJSON(text)
 	if err != nil {
@@ -182,11 +182,11 @@ func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) 
 	if err := json.Unmarshal([]byte(raw), &mr); err != nil {
 		return File{}, fmt.Errorf("model response is not categorization JSON: %w", err)
 	}
-	if len(mr.Categories) < 2 {
-		return File{}, fmt.Errorf("model returned %d categories; at least 2 are required", len(mr.Categories))
+	if len(mr.Categories) < 1 {
+		return File{}, fmt.Errorf("model returned %d categories; at least 1 is required", len(mr.Categories))
 	}
-	if len(mr.Categories) > max {
-		return File{}, fmt.Errorf("model returned %d categories; the maximum is %d", len(mr.Categories), max)
+	if len(mr.Categories) > maxCats {
+		return File{}, fmt.Errorf("model returned %d categories; the maximum is %d", len(mr.Categories), maxCats)
 	}
 
 	known := make(map[string]*session.Entry, len(doc.Entries))
@@ -220,8 +220,8 @@ func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) 
 			f.Categories = append(f.Categories, cat)
 		}
 	}
-	if len(f.Categories) < 2 {
-		return File{}, fmt.Errorf("after resolving ids, fewer than 2 categories have entries")
+	if len(f.Categories) < 1 {
+		return File{}, fmt.Errorf("after resolving ids, no category has entries")
 	}
 	for i := range f.Categories {
 		f.Categories[i].ID = i + 1
@@ -330,7 +330,7 @@ func WriteFile(path string, f File) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return os.WriteFile(path, append(data, '\n'), 0o644) //nolint:gosec // G306: the categories file is a user-editable document, not a secret.
 }
 
 // Validate rejects ids not present in the session and double assignment.
@@ -385,12 +385,12 @@ func Select(f File, cats []int) ([]string, error) {
 // Render writes the high-level table.
 func Render(w io.Writer, f File) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CAT\tLABEL\tENTRIES\tTOKENS")
+	_, _ = fmt.Fprintln(tw, "CAT\tLABEL\tENTRIES\tTOKENS")
 	for _, c := range f.Categories {
-		fmt.Fprintf(tw, "%d\t%s\t%d\t%d\n", c.ID, c.Label, c.Count, c.Tokens)
+		_, _ = fmt.Fprintf(tw, "%d\t%s\t%d\t%d\n", c.ID, c.Label, c.Count, c.Tokens)
 	}
 	if len(f.Uncategorized) > 0 {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\n", "-", "(uncategorized)", len(f.Uncategorized), 0)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\n", "-", "(uncategorized)", len(f.Uncategorized), 0)
 	}
 	return tw.Flush()
 }
@@ -414,11 +414,11 @@ func extractJSON(text string) (string, error) {
 	return text[start : end+1], nil
 }
 
-func snippet(s string, max int) string {
+func snippet(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > max {
-		s = s[:max] + "…"
+	if len(s) > maxLen {
+		s = s[:maxLen] + "…"
 	}
 	return s
 }

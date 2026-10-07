@@ -1,0 +1,31 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - gosec
+    - revive
+    - staticcheck
+
+  settings:
+    gosec:
+      # ctxed's whole purpose is to run the user's configured categorizer
+      # (`claude`, `opencode`, or `--categorizer-cmd`) and to read the session
+      # files the user names. G204/G304 (subprocess/file via a variable) and
+      # their taint-analysis counterparts G702/G703 therefore fire on every
+      # such call by design.
+      excludes:
+        - G204
+        - G304
+        - G702
+        - G703
+
+  exclusions:
+    rules:
+      # Test fixtures create temp dirs (0755) and scripts (0755) and read and
+      # write fixture files; gosec's permission checks do not apply to them.
+      - path: _test\.go
+        linters: [gosec]
+        text: "G30[16]"

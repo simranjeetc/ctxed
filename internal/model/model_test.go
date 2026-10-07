@@ -71,9 +71,9 @@ func TestOpenAIClient(t *testing.T) {
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
+		_ = json.Unmarshal(b, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"choices":[{"message":{"content":"model says hi"}}]}`)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"model says hi"}}]}`)
 	}))
 	defer srv.Close()
 
@@ -104,7 +104,7 @@ func TestOpenAIClient(t *testing.T) {
 }
 
 func TestOpenAIErrorStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "nope", http.StatusUnauthorized)
 	}))
 	defer srv.Close()

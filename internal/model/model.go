@@ -67,7 +67,7 @@ func (c *commandClient) Complete(ctx context.Context, prompt string) (string, er
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("categorizer command failed: %v: %s", err, strings.TrimSpace(errBuf.String()))
+		return "", fmt.Errorf("categorizer command failed: %w: %s", err, strings.TrimSpace(errBuf.String()))
 	}
 	return out.String(), nil
 }
@@ -100,8 +100,11 @@ func (c *openAIClient) Complete(ctx context.Context, prompt string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("model request: %w", err)
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", fmt.Errorf("model response read: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("model endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}

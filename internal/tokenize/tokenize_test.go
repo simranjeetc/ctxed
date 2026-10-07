@@ -1,7 +1,9 @@
 package tokenize_test
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/simranjeetc/ctxed/internal/tokenize"
@@ -73,5 +75,24 @@ func TestTiktokenKnownEncoding(t *testing.T) {
 	}
 	if tok.Count("hello world") == 0 {
 		t.Fatal("expected a positive token count")
+	}
+}
+
+// benchmarkSessionText builds the text of a synthetic n-message session, so the
+// benchmark counts tokens over a realistic workload without a fixture on disk.
+func benchmarkSessionText(n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "message %d about context windows: %s\n", i, strings.Repeat("token ", 40))
+	}
+	return b.String()
+}
+
+func BenchmarkCount(b *testing.B) {
+	text := benchmarkSessionText(2000)
+	tok := tokenize.Approximation{}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = tok.Count(text)
 	}
 }

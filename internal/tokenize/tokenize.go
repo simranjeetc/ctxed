@@ -20,8 +20,13 @@ type Tokenizer interface {
 // the 5-rune string "abcde" counts as 2 tokens.
 type Approximation struct{}
 
-func (Approximation) Name() string      { return "approximation" }
+// Name reports this tokenizer's name.
+func (Approximation) Name() string { return "approximation" }
+
+// Approximate reports that counts are estimates, not exact tokens.
 func (Approximation) Approximate() bool { return true }
+
+// Count estimates one token per four runes, rounded up.
 func (Approximation) Count(s string) int {
 	if s == "" {
 		return 0
@@ -35,8 +40,13 @@ type Tiktoken struct {
 	name string
 }
 
-func (t Tiktoken) Name() string      { return t.name }
+// Name reports the tokenizer's name.
+func (t Tiktoken) Name() string { return t.name }
+
+// Approximate reports that counts are exact BPE token counts.
 func (t Tiktoken) Approximate() bool { return false }
+
+// Count returns the exact number of BPE tokens in s.
 func (t Tiktoken) Count(s string) int {
 	if s == "" {
 		return 0

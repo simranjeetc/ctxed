@@ -1,0 +1,11 @@
+Session golden-session · live context: 7 messages · ~1.3k tokens (estimate)
+
+ #   Topic                                         Msgs   Tokens  Share  Status
+ 1   a very long topic label that will be clippe…     3      800    63%  done
+ 2   second topic                                     2      400    32%  in progress
+ 3   weird status                                     1       34     3%  ?
+     Compaction summary + kept tail                   1       34     3%  —
+
+Pending: question one; question two
+
+Not counted: 7 messages from before the last compaction.

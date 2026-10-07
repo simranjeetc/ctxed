@@ -72,9 +72,9 @@ func Render(w io.Writer, doc *session.Document, tok tokenize.Tokenizer, asJSON b
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "IDX\tROLE\tKIND\tTOKENS\tPREVIEW")
+	_, _ = fmt.Fprintln(tw, "IDX\tROLE\tKIND\tTOKENS\tPREVIEW")
 	for _, e := range r.Entries {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\n", e.Index, e.Role, e.Kind, e.Tokens, e.Preview)
+		_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\n", e.Index, e.Role, e.Kind, e.Tokens, e.Preview)
 	}
 	if err := tw.Flush(); err != nil {
 		return err

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // OpenCodeModel is the categorizer model when none is configured: an OpenCode
@@ -67,14 +68,14 @@ func ExportOpenCode(ctx context.Context, sessionID string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	defer func() { _ = tmp.Close() }()
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, "session", "export", sessionID)
 	cmd.Stdout = tmp
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("opencode session export %s: %v: %s", sessionID, err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("opencode session export %s: %w: %s", sessionID, err, strings.TrimSpace(stderr.String()))
 	}
 	data, err := os.ReadFile(tmp.Name())
 	if err != nil {
@@ -90,6 +91,7 @@ func ExportOpenCode(ctx context.Context, sessionID string) ([]byte, error) {
 // its JSON event stream. The throwaway session it creates is deleted after.
 type OpenCodeRun struct{ Model string }
 
+// Complete sends the prompt to `opencode run` and returns the text it streams.
 func (c OpenCodeRun) Complete(ctx context.Context, prompt string) (string, error) {
 	bin, err := OpenCodeBin()
 	if err != nil {
@@ -100,16 +102,23 @@ func (c OpenCodeRun) Complete(ctx context.Context, prompt string) (string, error
 		model = OpenCodeModel
 	}
 	var out, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, bin, "run", "--format", "json", "--model", model, "--title", "ctxed categorize", prompt)
+	cmd := exec.CommandContext(ctx, bin, "run", "--format", "json", "--model", model, "--title", "ctxed categorize")
+	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 	text, sessionID := parseRunEvents(out.Bytes())
 	if sessionID != "" && ValidOpenCodeSession(sessionID) == nil {
-		_ = exec.Command(bin, "session", "delete", sessionID).Run()
+		deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		del := exec.CommandContext(deleteCtx, bin, "session", "delete", sessionID)
+		del.Stderr = os.Stderr
+		if err := del.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "opencode session delete %s: %v\n", sessionID, err)
+		}
 	}
 	if runErr != nil {
-		return "", fmt.Errorf("opencode run (%s): %v: %s", model, runErr, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("opencode run (%s): %w: %s", model, runErr, strings.TrimSpace(stderr.String()))
 	}
 	if strings.TrimSpace(text) == "" {
 		return "", fmt.Errorf("opencode run (%s) returned no text", model)

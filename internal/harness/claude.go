@@ -1,3 +1,5 @@
+// Package harness shells out to the agent CLIs — Claude Code and OpenCode — to
+// locate a session, export it, and categorize its entries.
 package harness
 
 import (
@@ -84,6 +86,7 @@ func isFile(p string) bool {
 // prompt on stdin.
 type ClaudePrint struct{ Model string }
 
+// Complete sends the prompt to `claude -p` and returns its response.
 func (c ClaudePrint) Complete(ctx context.Context, prompt string) (string, error) {
 	bin := os.Getenv("CTXED_CLAUDE_BIN")
 	if bin == "" {
@@ -102,7 +105,7 @@ func (c ClaudePrint) Complete(ctx context.Context, prompt string) (string, error
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude -p (%s): %v: %s", model, err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("claude -p (%s): %w: %s", model, err, strings.TrimSpace(stderr.String()))
 	}
 	if strings.TrimSpace(out.String()) == "" {
 		return "", fmt.Errorf("claude -p (%s) returned no text", model)

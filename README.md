@@ -1,5 +1,7 @@
 # ctxed
 
+[![CI](https://github.com/simranjeetc/ctxed/actions/workflows/ci.yml/badge.svg)](https://github.com/simranjeetc/ctxed/actions/workflows/ci.yml)
+
 See what an agent session's context is made of: which topics it holds, how many
 tokens each takes, which are done, and what is still pending. Works the same in
 Claude Code and OpenCode. Read-only: ctxed never changes a session.
@@ -20,6 +22,8 @@ Not counted: 690 messages from before the last compaction.
 ```
 
 You decide what to do with it: carry on, compact, or start a new session.
+
+![demo](docs/demo.gif)
 
 ## Inside a session: the `ctxed-overview` skill
 
@@ -45,7 +49,7 @@ There is no plugin and nothing in the request path.
 ### Install
 
 ```sh
-go install ./cmd/ctxed                                     # ~/go/bin/ctxed
+go install github.com/simranjeetc/ctxed/cmd/ctxed@latest   # ~/go/bin/ctxed
 ln -s "$PWD/skills/ctxed-overview" ~/.claude/skills/        # Claude Code
 mkdir -p ~/.config/opencode/skills/ctxed-overview \
   && cp skills/ctxed-overview/SKILL.md ~/.config/opencode/skills/ctxed-overview/   # OpenCode
@@ -56,7 +60,7 @@ Restart OpenCode's server afterwards; it loads skills at start.
 ## Usage
 
 ```
-ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--max-categories N]
+ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--max-categories N] [--no-model]
 ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
 ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                  [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
@@ -80,6 +84,9 @@ ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
   `in progress`, or `?` when it gave none.
 - **If the model call fails**, the sizes are still printed, as one
   "Whole session" row, and the error goes to stderr.
+- **`--no-model`** skips the categorizer entirely and prints only the
+  whole-session sizes, as a single "Whole session" row. No session content is
+  sent to a model.
 - **Categorizer**: `--categorizer-cmd` or `CTXED_CATEGORIZER_CMD` (prompt on
   stdin, answer on stdout), else the harness's own CLI — `claude -p --model
   haiku` for Claude Code, `opencode run --model opencode-go/deepseek-v4-flash`
@@ -107,6 +114,14 @@ Groups the entries into 2–5 categories and writes an editable
 `<name>.categories.json`. Model options: `--categorizer-cmd`, or
 `--base-url/--api-key/--model` (fallbacks `OPENAI_BASE_URL`, `OPENAI_API_KEY`,
 `CTXED_MODEL`).
+
+## Privacy
+
+`overview` and `categorize` send excerpts of the session to the model the
+categorizer is configured to use (the harness's own cheap model by default, or
+whatever `--categorizer-cmd` / `--model` / `--base-url` select). Those excerpts
+leave the machine only if that model is remote. Pass `--no-model` to `overview`
+to skip the categorizer entirely and send nothing.
 
 ## Token counts
 
