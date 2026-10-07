@@ -105,7 +105,7 @@ this file yourself.
 
 ## Tests
 
-- [ ] **T20 Unit tests for `internal/overview`.** Write table-driven tests for `Build` (placement, nearest-entry fallback, the summary row, sorting) and `Short`.
+- [x] **T20 Unit tests for `internal/overview`.** Write table-driven tests for `Build` (placement, nearest-entry fallback, the summary row, sorting) and `Short`.
   Check: `go test -cover ./internal/overview | grep -qE 'coverage: ([89][0-9]|100)'`
 
 - [ ] **T21 Golden-file test for the overview table.** Save the rendered table as `internal/overview/testdata/table.golden`, compare against it, and regenerate it when `-update` is passed.
