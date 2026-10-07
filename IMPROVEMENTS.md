@@ -114,7 +114,7 @@ this file yourself.
 - [x] **T22 Tests for `internal/harness`.** Put a fake `opencode` and a fake `claude` shell script on a temp PATH, then test `OpenCodeBin`, `ExportOpenCode`, `ClaudePrint.Complete` and `ClaudeTranscript`.
   Check: `go test -cover ./internal/harness | grep -qE 'coverage: ([7-9][0-9]|100)'`
 
-- [ ] **T23 Tests for `internal/inspect`.**
+- [x] **T23 Tests for `internal/inspect`.**
   Check: `go test -cover ./internal/inspect | grep -qE 'coverage: ([7-9][0-9]|100)'`
 
 - [ ] **T24 Raise coverage for `internal/session` and `internal/tokenize`.**
