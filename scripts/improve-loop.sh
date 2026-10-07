@@ -79,13 +79,20 @@ dirty() {
 	git status --porcelain | grep -vE '^\?\? (show-me-.*\.html|\.verify/|\.archify/)'
 }
 
-# test_weight counts the tests a plain `go test ./...` runs, minus skips, to
-# catch tests that were deleted, skipped, or hidden behind a build tag.
+# test_weight counts the tests `go test ./...` runs, minus skips, to catch
+# tests that were deleted, skipped, or hidden behind a build tag. A task whose
+# block has a line "Tests-tag: `tag`" may move tests behind that tag: they are
+# counted with it (the reviewer judges whether the move was right).
 test_weight() {
-	local funcs skips
-	funcs=$(go test -list . ./... 2>/dev/null | grep -cE '^(Test|Fuzz|Example)')
+	local tags=${1:-} funcs skips
+	funcs=$(go test ${tags:+-tags "$tags"} -list . ./... 2>/dev/null | grep -cE '^(Test|Fuzz|Example)')
 	skips=$(grep -rhE '\bt\.Skip(Now|f)?\(' --include='*_test.go' . | wc -l)
 	echo $((funcs - skips))
+}
+
+# task_tests_tag prints the build tag a task may move tests behind, if any.
+task_tests_tag() {
+	task_block "$1" | grep -E '^\s*Tests-tag:' | head -1 | sed -E 's/^[^`]*`([^`]*)`.*/\1/'
 }
 
 # gates runs the fixed checks and the task's committed check.
@@ -152,7 +159,8 @@ while [ "$done_count" -lt "$MAX" ]; do
 	verdict="$LOGDIR/$id.review"
 	: >"$log"
 	head_before=$(git rev-parse HEAD)
-	weight_before=$(test_weight)
+	tests_tag=$(task_tests_tag "$id")
+	weight_before=$(test_weight "$tests_tag")
 
 	# stop ends the run for problems a retry must not paper over.
 	stop() {
@@ -197,8 +205,8 @@ $feedback"
 		gate_out="$LOGDIR/$id.gates"
 		if [ -z "$(dirty)" ]; then
 			reason="no changes were made"
-		elif [ "$(test_weight)" -lt "$weight_before" ]; then
-			reason="fewer tests run under a plain 'go test ./...' than before ($(test_weight) < $weight_before): tests were removed, skipped, or hidden behind a build tag"
+		elif [ "$(test_weight "$tests_tag")" -lt "$weight_before" ]; then
+			reason="fewer tests run under 'go test ${tests_tag:+-tags $tests_tag }./...' than before ($(test_weight "$tests_tag") < $weight_before): tests were removed, skipped, or hidden behind a build tag"
 		elif ! gates "$check" >"$gate_out" 2>&1; then
 			reason="checks failed; last lines of their output:
 $(tail -40 "$gate_out")"

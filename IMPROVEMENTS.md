@@ -61,6 +61,7 @@ this file yourself.
 
 - [ ] **T11 Keep the parked code out of the binary.** In `internal/cli`, move the parked commands (runDrop, runPrune, runCompactInstruction and their helpers) out of `cli.go` into a new `parked.go`. Put `//go:build parked` on `parked.go`, `opencode.go`, `opencode_test.go` and `export_test.go`. Split `cli_test.go`: tests that call the parked commands through `RunWithParked` go to `parked_test.go` under the same tag. Every other test (usage, version, inspect, categorize, stdin) stays untagged, and so does the blank import of `internal/adapter/builtin` that the tests rely on. Live code must not import `prune`, `compact` or `ocprune`.
   Check: `! go list -deps ./cmd/ctxed | grep -qE 'internal/(prune|compact|ocprune)' && go test ./internal/cli && go test -tags parked ./... && go vet -tags parked ./... && test -z "$(gofmt -l internal/cli)"`
+  Tests-tag: `parked`
 
 ## Correctness
 
