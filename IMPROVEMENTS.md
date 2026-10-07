@@ -131,7 +131,7 @@ this file yourself.
 - [x] **T27 Add `.golangci.yml`** enabling errcheck, staticcheck, revive, gosec and errorlint, and fix what it reports in live code (not parked code).
   Check: `test -f .golangci.yml && { ! command -v golangci-lint >/dev/null || golangci-lint run ./...; }`
 
-- [ ] **T28 Add Dependabot** in `.github/dependabot.yml` for gomod and github-actions, weekly.
+- [x] **T28 Add Dependabot** in `.github/dependabot.yml` for gomod and github-actions, weekly.
   Check: `test -f .github/dependabot.yml`
 
 - [ ] **T29 Split `internal/cli/cli.go`** into one file per command (`inspect.go`, `categorize.go`, `common.go`), moving code without changing it.
