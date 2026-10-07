@@ -89,42 +89,6 @@ a proxy rewrite.
 - **Python analysis repo**: aggregate token/pruning statistics across many saved
   sessions. Explicitly a separate repository, not this binary.
 
-## 6. A reusable improve loop
-
-`scripts/improve-loop.sh` drove this repo's whole backlog (T01–T32) and is worth
-generalising. It stays in this repo for now; promote it to its own tool when a second
-repository is ready to use it, so the required knobs are observed rather than guessed.
-
-The loop already owns the parts that should stay generic — spec read from `HEAD`, one
-task per pass, the implementer barred from staging or committing, an independent
-reviewer, tests that may not shrink, tick-and-commit only on pass, failed attempts kept
-in `git stash`, and the rejection reason fed to the next attempt. What is baked in and
-would move to per-repo config:
-
-- `gates()` is Go-only: `gofmt -l .`, `go build`, `go vet`, `go test ./...`.
-- `test_weight()` is Go-only: `go test -list` plus a scrape of `*_test.go` for `t.Skip`.
-- `FILE=IMPROVEMENTS.md`, `SELF=scripts/improve-loop.sh` and the untracked-file
-  exclusion list are constants.
-- `review()` tells the reviewer it is looking at "one change to a Go CLI repository".
-- The task grammar (`- [ ] **Tnn`, `Check:`, `Tests-tag:`, `(manual)`, `(needs Txx)`) is
-  only implied by the regexes.
-
-A minimal seam is a small config the script reads — `file:`, `gates:`, `test-weight:`,
-`review-brief:`, `exclude:` — with the task's own `Check` always run first, and the
-current defaults preserved when no config is present.
-
-Two design notes from running it here, both cheap to honour:
-
-- **A task's `Check` is a point-in-time assertion.** T11b's check named `cli.go` as the
-  home of seven helpers; T29 later and legitimately moved them to `common.go`, so
-  re-running every ticked task's check now shows one stale failure. Treat historical
-  checks as documentation of what was asserted, never as a regression gate — CI is the
-  regression gate.
-- **Conventions belong in the worklist, not the agent.** Two failures (a move task
-  copying a file's package doc comment; teardown inheriting the caller's cancelled
-  `context`) were fixed by adding rules to the worklist, which is versioned and read
-  from `HEAD`. The implementer agent stays role-only and repo-agnostic.
-
 ## Positioning to keep in mind
 
 ctxed and DCP share the goal (shrink context) but invert the control model: DCP prunes
