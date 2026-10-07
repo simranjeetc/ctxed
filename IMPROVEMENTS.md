@@ -4,7 +4,7 @@ Run with `scripts/improve-loop.sh`. Each task passes through three hands:
 
 | Role | Who | May change |
 | --- | --- | --- |
-| Implementer | `IMPROVE_MODEL` (default haiku) | source, tests, docs for its one task |
+| Implementer | opencode, `IMPROVE_MODEL` (default `opencode-go/deepseek-v4-pro`) | source, tests, docs for its one task |
 | Checks | the script | nothing; runs gofmt, build, vet, test and the task's Check |
 | Reviewer | `REVIEW_MODEL` (default sonnet) | nothing; read-only, judges the diff |
 

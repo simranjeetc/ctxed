@@ -11,8 +11,12 @@
 #   scripts/improve-loop.sh -n 3       # at most 3 tasks
 #   scripts/improve-loop.sh --dry-run  # show the next task and its check
 #
-# Env: IMPROVE_MODEL (default haiku), REVIEW_MODEL (default sonnet),
-#      IMPROVE_ATTEMPTS (default 1), CLAUDE_BIN (default claude).
+# Env: IMPROVE_MODEL (default opencode-go/deepseek-v4-pro), REVIEW_MODEL
+#      (default sonnet), IMPROVE_ATTEMPTS (default 1), CLAUDE_BIN (default
+#      claude).
+# The implementer runs opencode (IMPROVE_BIN, IMPROVE_AGENT); clear
+# IMPROVE_AGENT to fall back to the claude CLI. The reviewer runs the claude
+# CLI unless REVIEW_AGENT names an opencode agent (then REVIEW_BIN is used).
 #
 # A failed check or review is retried from the committed tree, with the reason
 # passed to the next attempt; each failed attempt is kept in `git stash`. Rule
@@ -22,9 +26,13 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 FILE=IMPROVEMENTS.md
 SELF=scripts/improve-loop.sh
-MODEL=${IMPROVE_MODEL:-haiku}
-REVIEWER=${REVIEW_MODEL:-sonnet}
 CLAUDE=${CLAUDE_BIN:-claude}
+MODEL=${IMPROVE_MODEL:-opencode-go/deepseek-v4-pro}
+REVIEWER=${REVIEW_MODEL:-sonnet}
+IMPROVE_BIN=${IMPROVE_BIN:-opencode}
+REVIEW_BIN=${REVIEW_BIN:-$CLAUDE}
+IMPROVE_AGENT=${IMPROVE_AGENT:-improver}
+REVIEW_AGENT=${REVIEW_AGENT:-}
 LOGDIR=.verify/improve
 MAX=1000
 ATTEMPTS=${IMPROVE_ATTEMPTS:-1}
@@ -42,6 +50,11 @@ if [ "$MODEL" = "$REVIEWER" ]; then
 	echo "✗ IMPROVE_MODEL and REVIEW_MODEL must differ" >&2
 	exit 2
 fi
+
+# Fail early with a clear message if the chosen harness is not installed.
+need() { command -v "$1" >/dev/null || { echo "✗ '$1' not found on PATH" >&2; exit 2; }; }
+if [ -n "$IMPROVE_AGENT" ]; then need "$IMPROVE_BIN"; else need "$CLAUDE"; fi
+if [ -n "$REVIEW_AGENT" ]; then need "$REVIEW_BIN"; else need "$CLAUDE"; fi
 
 # The committed backlog: the only source of task text and checks.
 spec() { git show "HEAD:$FILE"; }
@@ -106,12 +119,38 @@ gates() {
 	bash -c "$check" || return 1
 }
 
+# reviewer_run sends the review prompt on stdin and writes the reviewer's
+# answer to $1. The reviewer runs the claude CLI unless REVIEW_AGENT selects an
+# opencode agent, which must be read-only (e.g. researcher).
+reviewer_run() {
+	local out=$1
+	if [ -n "$REVIEW_AGENT" ]; then
+		"$REVIEW_BIN" run --model "$REVIEWER" --agent "$REVIEW_AGENT" --auto >"$out" 2>&1
+	else
+		"$CLAUDE" -p --model "$REVIEWER" --no-session-persistence \
+			--allowedTools "Read,Glob,Grep" --disallowedTools "Edit,Write,NotebookEdit,Bash" >"$out" 2>&1
+	fi
+}
+
+# implementer_run runs the implementer on the task prompt. It uses opencode
+# (model $MODEL, agent $IMPROVE_AGENT, auto-approving what the agent does not
+# deny) unless IMPROVE_AGENT is empty, which falls back to claude -p.
+implementer_run() {
+	local prompt=$1
+	if [ -n "$IMPROVE_AGENT" ]; then
+		"$IMPROVE_BIN" run --model "$MODEL" --agent "$IMPROVE_AGENT" --auto "$prompt"
+	else
+		"$CLAUDE" -p "$prompt" --model "$MODEL" \
+			--allowedTools "Read,Edit,Write,Glob,Grep,Bash"
+	fi
+}
+
 # review asks a different model, with read-only tools, whether the diff does
 # the task. It must end with "VERDICT: PASS" or "VERDICT: FAIL: <reason>".
 review() {
-	local id=$1 out=$2
+	local id=$1 out=$2 prompt
 	git add -A -- . ':!show-me-*.html' >/dev/null
-	{
+	prompt=$(
 		echo "You are reviewing one change to a Go CLI repository. You may read files; do not change anything."
 		echo
 		echo "The task, exactly as committed:"
@@ -127,8 +166,8 @@ review() {
 		git diff --cached
 		echo
 		echo "End your answer with exactly one line: VERDICT: PASS  or  VERDICT: FAIL: <one-line reason>"
-	} | "$CLAUDE" -p --model "$REVIEWER" --no-session-persistence \
-		--allowedTools "Read,Glob,Grep" --disallowedTools "Edit,Write,NotebookEdit,Bash" >"$out" 2>&1
+	)
+	printf '%s\n' "$prompt" | reviewer_run "$out"
 	git reset -q
 }
 
@@ -191,8 +230,7 @@ A previous attempt at this task was rejected and discarded; you start from the c
 $feedback"
 		fi
 		echo "== attempt $attempt: implementer ($MODEL)" >>"$log"
-		"$CLAUDE" -p "$prompt" --model "$MODEL" \
-			--allowedTools "Read,Edit,Write,Glob,Grep,Bash" >>"$log" 2>&1 ||
+		implementer_run "$prompt" >>"$log" 2>&1 ||
 			stop "the implementer run failed"
 
 		# 2. Rule breaks and blocks end the run; no retry.
