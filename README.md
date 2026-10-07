@@ -56,7 +56,7 @@ Restart OpenCode's server afterwards; it loads skills at start.
 ## Usage
 
 ```
-ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--max-categories N]
+ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--max-categories N] [--no-model]
 ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
 ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                  [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
@@ -80,6 +80,9 @@ ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
   `in progress`, or `?` when it gave none.
 - **If the model call fails**, the sizes are still printed, as one
   "Whole session" row, and the error goes to stderr.
+- **`--no-model`** skips the categorizer entirely and prints only the
+  whole-session sizes, as a single "Whole session" row. No session content is
+  sent to a model.
 - **Categorizer**: `--categorizer-cmd` or `CTXED_CATEGORIZER_CMD` (prompt on
   stdin, answer on stdout), else the harness's own CLI — `claude -p --model
   haiku` for Claude Code, `opencode run --model opencode-go/deepseek-v4-flash`

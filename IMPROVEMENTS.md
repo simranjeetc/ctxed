@@ -97,7 +97,7 @@ this file yourself.
 - [x] **T17 Send the prompt to opencode on stdin, not as an argument.** In `OpenCodeRun.Complete`, pass the prompt on stdin if `opencode run` accepts it; otherwise write it to a temp file and attach it with `--file`. Verify the CLI's behaviour with `opencode run --help` first.
   Check: `go test ./internal/harness && ! grep -n '"--title", "ctxed categorize", prompt)' internal/harness/opencode.go`
 
-- [ ] **T18 Add a `--no-model` flag** to `ctxed overview`. It skips the categorizer and prints only the "Whole session" sizes. Document it in the README and the usage text.
+- [x] **T18 Add a `--no-model` flag** to `ctxed overview`. It skips the categorizer and prints only the "Whole session" sizes. Document it in the README and the usage text.
   Check: `CTXED_CATEGORIZER_CMD=false go run ./cmd/ctxed overview testdata/claude_session.jsonl --no-model 2>&1 | grep -q "Whole session"`
 
 - [ ] **T19 Add a privacy note to the README.** It says that `overview` and `categorize` send excerpts of the session to the configured model, and that `--no-model` avoids it.

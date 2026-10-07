@@ -87,7 +87,7 @@ func usage(w io.Writer) {
 
 Usage:
   ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD]
-                [--max-categories N]
+                [--max-categories N] [--no-model]
   ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
   ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]

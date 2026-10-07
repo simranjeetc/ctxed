@@ -29,6 +29,7 @@ func runOverview(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	maxCats := fs.Int("max-categories", categorize.DefaultMaxCategories, "maximum number of topics")
 	maxInput := fs.Int("max-input-bytes", 30000, "target prompt size in bytes")
 	asJSON := fs.Bool("json", false, "emit JSON")
+	noModel := fs.Bool("no-model", false, "skip the categorizer; print only the whole-session sizes")
 	modelName := fs.String("model", "", "model name, for tokenizer selection")
 	encoding := fs.String("tokenizer", "", "tokenizer encoding name")
 	flags, rest := splitArgs(args, valueFlagsOverview)
@@ -62,13 +63,15 @@ func runOverview(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 
 	var f categorize.File
-	topics := overview.Topics(doc)
-	if len(topics.Entries) >= 2 {
-		f, err = categorizeTopics(ctx, topics, doc.Source, *cmd, *maxCats, *maxInput, tok)
-		if err != nil {
-			// The sizes are still worth showing; only the topic names are missing.
-			fmt.Fprintf(stderr, "ctxed overview: topics unavailable: %v\n", err)
-			f = categorize.File{}
+	if !*noModel {
+		topics := overview.Topics(doc)
+		if len(topics.Entries) >= 2 {
+			f, err = categorizeTopics(ctx, topics, doc.Source, *cmd, *maxCats, *maxInput, tok)
+			if err != nil {
+				// The sizes are still worth showing; only the topic names are missing.
+				fmt.Fprintf(stderr, "ctxed overview: topics unavailable: %v\n", err)
+				f = categorize.File{}
+			}
 		}
 	}
 	r := overview.Build(doc, f, tok, src.name)
