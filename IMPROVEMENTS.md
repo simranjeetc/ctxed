@@ -137,7 +137,7 @@ this file yourself.
 - [x] **T29 Split `internal/cli/cli.go`** into one file per command (`inspect.go`, `categorize.go`, `common.go`), moving code without changing it.
   Check: `go test ./internal/cli && [ $(wc -l < internal/cli/cli.go) -lt 200 ]`
 
-- [ ] **T30 Tidy the repo root.** Add `show-me-*.html` to `.gitignore`. Do not delete the files.
+- [x] **T30 Tidy the repo root.** Add `show-me-*.html` to `.gitignore`. Do not delete the files.
   Check: `! git status --short | grep -q show-me`
 
 - [ ] **T31 Add a CHANGELOG.md** in Keep a Changelog format, with a `0.1.0` entry summarising `ctxed overview`, `inspect` and `categorize`.
