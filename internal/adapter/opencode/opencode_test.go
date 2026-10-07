@@ -163,3 +163,15 @@ func TestParseCompactedShowsLiveContext(t *testing.T) {
 		t.Fatalf("write kept %d items (%v), want 6", len(top.Messages), err)
 	}
 }
+
+func FuzzParse(f *testing.F) {
+	data, err := os.ReadFile(fixture)
+	if err != nil {
+		f.Fatalf("read seed %s: %v", fixture, err)
+	}
+	f.Add(data)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// Parse must never panic on arbitrary input.
+		_, _ = (&opencode.Adapter{}).Parse(data)
+	})
+}

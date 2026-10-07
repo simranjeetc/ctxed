@@ -193,3 +193,17 @@ func TestCompactedRoundTripKeepsPreBoundaryLines(t *testing.T) {
 		}
 	}
 }
+
+func FuzzParse(f *testing.F) {
+	for _, path := range []string{fixture, compactedFixture} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			f.Fatalf("read seed %s: %v", path, err)
+		}
+		f.Add(data)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// Parse must never panic on arbitrary input.
+		_, _ = (&claude.Adapter{}).Parse(data)
+	})
+}

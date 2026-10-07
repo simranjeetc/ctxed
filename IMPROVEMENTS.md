@@ -120,7 +120,7 @@ this file yourself.
 - [x] **T24 Raise coverage for `internal/session` and `internal/tokenize`.**
   Check: `go test -cover ./internal/session ./internal/tokenize | grep -cE 'coverage: (7[5-9]|[89][0-9]|100)' | grep -qx 2`
 
-- [ ] **T25 Fuzz the adapters.** Add `FuzzParse` to `internal/adapter/claude` and `internal/adapter/opencode`, seeded from `testdata/`; Parse must never panic.
+- [x] **T25 Fuzz the adapters.** Add `FuzzParse` to `internal/adapter/claude` and `internal/adapter/opencode`, seeded from `testdata/`; Parse must never panic.
   Check: `go test -run=^$ -fuzz=FuzzParse -fuzztime=20s ./internal/adapter/claude && go test -run=^$ -fuzz=FuzzParse -fuzztime=20s ./internal/adapter/opencode`
 
 - [ ] **T26 Benchmarks.** Add `BenchmarkParse` (both adapters) and `BenchmarkCount` (tokenize) on a generated 2,000-message session.
