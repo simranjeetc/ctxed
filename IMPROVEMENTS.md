@@ -81,7 +81,7 @@ this file yourself.
 - [x] **T13 Cancel on Ctrl-C.** In `cmd/ctxed/main.go`, create a context with `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)` and pass it down, replacing `context.Background()` in `internal/cli/overview.go`.
   Check: `grep -q NotifyContext cmd/ctxed/main.go`.
 
-- [ ] **T14 Wrap errors with %w.** In `internal/harness/*.go` and `internal/model/model.go`, change `fmt.Errorf(... %v ..., err)` to `%w` wherever an error value is wrapped.
+- [x] **T14 Wrap errors with %w.** In `internal/harness/*.go` and `internal/model/model.go`, change `fmt.Errorf(... %v ..., err)` to `%w` wherever an error value is wrapped.
   Check: `! grep -rnE 'Errorf\(.*%v.*err\)' internal/harness internal/model`
 
 - [ ] **T15 Handle the ReadAll error** in `internal/model/model.go` (`raw, _ := io.ReadAll(...)`).

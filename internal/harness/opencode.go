@@ -74,7 +74,7 @@ func ExportOpenCode(ctx context.Context, sessionID string) ([]byte, error) {
 	cmd.Stdout = tmp
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("opencode session export %s: %v: %s", sessionID, err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("opencode session export %s: %w: %s", sessionID, err, strings.TrimSpace(stderr.String()))
 	}
 	data, err := os.ReadFile(tmp.Name())
 	if err != nil {
@@ -109,7 +109,7 @@ func (c OpenCodeRun) Complete(ctx context.Context, prompt string) (string, error
 		_ = exec.Command(bin, "session", "delete", sessionID).Run()
 	}
 	if runErr != nil {
-		return "", fmt.Errorf("opencode run (%s): %v: %s", model, runErr, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("opencode run (%s): %w: %s", model, runErr, strings.TrimSpace(stderr.String()))
 	}
 	if strings.TrimSpace(text) == "" {
 		return "", fmt.Errorf("opencode run (%s) returned no text", model)

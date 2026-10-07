@@ -67,7 +67,7 @@ func (c *commandClient) Complete(ctx context.Context, prompt string) (string, er
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("categorizer command failed: %v: %s", err, strings.TrimSpace(errBuf.String()))
+		return "", fmt.Errorf("categorizer command failed: %w: %s", err, strings.TrimSpace(errBuf.String()))
 	}
 	return out.String(), nil
 }

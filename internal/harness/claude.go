@@ -102,7 +102,7 @@ func (c ClaudePrint) Complete(ctx context.Context, prompt string) (string, error
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude -p (%s): %v: %s", model, err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("claude -p (%s): %w: %s", model, err, strings.TrimSpace(stderr.String()))
 	}
 	if strings.TrimSpace(out.String()) == "" {
 		return "", fmt.Errorf("claude -p (%s) returned no text", model)
