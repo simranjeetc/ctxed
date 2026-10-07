@@ -111,6 +111,14 @@ Groups the entries into 2–5 categories and writes an editable
 `--base-url/--api-key/--model` (fallbacks `OPENAI_BASE_URL`, `OPENAI_API_KEY`,
 `CTXED_MODEL`).
 
+## Privacy
+
+`overview` and `categorize` send excerpts of the session to the model the
+categorizer is configured to use (the harness's own cheap model by default, or
+whatever `--categorizer-cmd` / `--model` / `--base-url` select). Those excerpts
+leave the machine only if that model is remote. Pass `--no-model` to `overview`
+to skip the categorizer entirely and send nothing.
+
 ## Token counts
 
 Counts are estimates by default: one token per four runes, rounded up, labelled

@@ -100,7 +100,7 @@ this file yourself.
 - [x] **T18 Add a `--no-model` flag** to `ctxed overview`. It skips the categorizer and prints only the "Whole session" sizes. Document it in the README and the usage text.
   Check: `CTXED_CATEGORIZER_CMD=false go run ./cmd/ctxed overview testdata/claude_session.jsonl --no-model 2>&1 | grep -q "Whole session"`
 
-- [ ] **T19 Add a privacy note to the README.** It says that `overview` and `categorize` send excerpts of the session to the configured model, and that `--no-model` avoids it.
+- [x] **T19 Add a privacy note to the README.** It says that `overview` and `categorize` send excerpts of the session to the configured model, and that `--no-model` avoids it.
   Check: `grep -qi privacy README.md`.
 
 ## Tests
