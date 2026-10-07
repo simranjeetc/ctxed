@@ -93,7 +93,9 @@ func TestUnknownFieldsSurviveRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]json.RawMessage
-	json.Unmarshal(out, &got)
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
 	var custom struct {
 		Keep string `json:"keep"`
 	}
@@ -122,7 +124,9 @@ func TestNonEntryMessagePreservedOnWrite(t *testing.T) {
 			Type string `json:"type"`
 		} `json:"messages"`
 	}
-	json.Unmarshal(out, &got)
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
 	if len(got.Messages) != 1 || got.Messages[0].Type != "idle" {
 		t.Fatalf("expected only the idle message to remain, got %+v", got.Messages)
 	}
@@ -172,7 +176,7 @@ func FuzzParse(f *testing.F) {
 		f.Fatalf("read seed %s: %v", fixture, err)
 	}
 	f.Add(data)
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		// Parse must never panic on arbitrary input.
 		_, _ = (&opencode.Adapter{}).Parse(data)
 	})

@@ -20,6 +20,7 @@ func init() { adapter.Register(&Adapter{}) }
 // Adapter implements adapter.Adapter for OpenCode session exports.
 type Adapter struct{}
 
+// Name returns the adapter's registered name.
 func (a *Adapter) Name() string { return "opencode" }
 
 // Detect reports whether data is an OpenCode export: a JSON object with a

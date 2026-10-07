@@ -100,7 +100,7 @@ func (c *openAIClient) Complete(ctx context.Context, prompt string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("model request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return "", fmt.Errorf("model response read: %w", err)

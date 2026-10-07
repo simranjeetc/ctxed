@@ -168,8 +168,8 @@ func Render(w io.Writer, r Report, asJSON bool) error {
 	if r.Tokenizer.Approximate {
 		est = " (estimate)"
 	}
-	fmt.Fprintf(w, "Session %s · live context: %d messages · ~%s tokens%s\n\n", r.Session, r.Entries, Short(r.Tokens), est)
-	fmt.Fprintf(w, " %-2s  %-44s %5s %8s %6s  %s\n", "#", "Topic", "Msgs", "Tokens", "Share", "Status")
+	_, _ = fmt.Fprintf(w, "Session %s · live context: %d messages · ~%s tokens%s\n\n", r.Session, r.Entries, Short(r.Tokens), est)
+	_, _ = fmt.Fprintf(w, " %-2s  %-44s %5s %8s %6s  %s\n", "#", "Topic", "Msgs", "Tokens", "Share", "Status")
 	n := 0
 	for _, row := range r.Rows {
 		num, status := "", "—"
@@ -178,13 +178,13 @@ func Render(w io.Writer, r Report, asJSON bool) error {
 			num = fmt.Sprint(n)
 			status = statusText(row.Status)
 		}
-		fmt.Fprintf(w, " %-2s  %-44s %5d %8s %5.0f%%  %s\n", num, clip(row.Label, 44), row.Entries, Short(row.Tokens), share(row.Tokens, r.Tokens), status)
+		_, _ = fmt.Fprintf(w, " %-2s  %-44s %5d %8s %5.0f%%  %s\n", num, clip(row.Label, 44), row.Entries, Short(row.Tokens), share(row.Tokens, r.Tokens), status)
 	}
 	if len(r.Pending) > 0 {
-		fmt.Fprintf(w, "\nPending: %s\n", strings.Join(r.Pending, "; "))
+		_, _ = fmt.Fprintf(w, "\nPending: %s\n", strings.Join(r.Pending, "; "))
 	}
 	if r.Compacted > 0 {
-		fmt.Fprintf(w, "\nNot counted: %d messages from before the last compaction.\n", r.Compacted)
+		_, _ = fmt.Fprintf(w, "\nNot counted: %d messages from before the last compaction.\n", r.Compacted)
 	}
 	return nil
 }

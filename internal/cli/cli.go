@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -73,17 +74,17 @@ func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		usage(stdout)
 		return ExitOK
 	case "version", "--version", "-v":
-		fmt.Fprintf(stdout, "ctxed %s\n", version)
+		_, _ = fmt.Fprintf(stdout, "ctxed %s\n", version)
 		return ExitOK
 	default:
-		fmt.Fprintf(stderr, "ctxed: unknown command %q\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "ctxed: unknown command %q\n", args[0])
 		usage(stderr)
 		return ExitUsage
 	}
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `ctxed — show what an agent session's context is made of
+	_, _ = fmt.Fprint(w, `ctxed — show what an agent session's context is made of
 
 Usage:
   ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD]
@@ -121,7 +122,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		return parseErrExit(err, stderr)
 	}
 	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "ctxed inspect: expected exactly one session file")
+		_, _ = fmt.Fprintln(stderr, "ctxed inspect: expected exactly one session file")
 		return ExitUsage
 	}
 	data, err := os.ReadFile(rest[0])
@@ -203,7 +204,7 @@ func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return parseErrExit(err, stderr)
 	}
 	if len(rest) > 1 {
-		fmt.Fprintln(stderr, "ctxed categorize: expected at most one session file")
+		_, _ = fmt.Fprintln(stderr, "ctxed categorize: expected at most one session file")
 		return ExitUsage
 	}
 	in := ""
@@ -237,7 +238,7 @@ func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	prompt := categorize.Prompt(doc, *maxCats, *maxInput)
 	if len(prompt) > *maxInput {
 		// Prompt is bounded by construction; this is a safety net only.
-		fmt.Fprintf(stderr, "ctxed categorize: prompt is %d bytes; the limit is %d\n", len(prompt), *maxInput)
+		_, _ = fmt.Fprintf(stderr, "ctxed categorize: prompt is %d bytes; the limit is %d\n", len(prompt), *maxInput)
 		return ExitError
 	}
 	text, err := client.Complete(context.Background(), prompt)
@@ -262,7 +263,7 @@ func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		if err != nil {
 			return fail(stderr, err)
 		}
-		fmt.Fprintf(stdout, "%s", data)
+		_, _ = fmt.Fprintf(stdout, "%s", data)
 		return ExitOK
 	}
 	if err := categorize.WriteFile(outPath, f); err != nil {
@@ -271,7 +272,7 @@ func runCategorize(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if err := categorize.Render(stdout, f); err != nil {
 		return fail(stderr, err)
 	}
-	fmt.Fprintf(stdout, "wrote %s\n", outPath)
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", outPath)
 	return ExitOK
 }
 
@@ -300,14 +301,14 @@ func load(data []byte, stderr io.Writer) (*session.Document, int) {
 	return doc, ExitOK
 }
 
-func parseErrExit(err error, stderr io.Writer) int {
-	if err == flag.ErrHelp {
+func parseErrExit(err error, _ io.Writer) int {
+	if errors.Is(err, flag.ErrHelp) {
 		return ExitOK
 	}
 	return ExitUsage
 }
 
 func fail(stderr io.Writer, err error) int {
-	fmt.Fprintf(stderr, "ctxed: %v\n", err)
+	_, _ = fmt.Fprintf(stderr, "ctxed: %v\n", err)
 	return ExitError
 }

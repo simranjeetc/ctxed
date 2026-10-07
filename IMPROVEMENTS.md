@@ -128,7 +128,7 @@ this file yourself.
 
 ## Hygiene
 
-- [ ] **T27 Add `.golangci.yml`** enabling errcheck, staticcheck, revive, gosec and errorlint, and fix what it reports in live code (not parked code).
+- [x] **T27 Add `.golangci.yml`** enabling errcheck, staticcheck, revive, gosec and errorlint, and fix what it reports in live code (not parked code).
   Check: `test -f .golangci.yml && { ! command -v golangci-lint >/dev/null || golangci-lint run ./...; }`
 
 - [ ] **T28 Add Dependabot** in `.github/dependabot.yml` for gomod and github-actions, weekly.

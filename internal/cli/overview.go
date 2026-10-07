@@ -37,7 +37,7 @@ func runOverview(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return parseErrExit(err, stderr)
 	}
 	if len(rest) > 1 {
-		fmt.Fprintln(stderr, "ctxed overview: expected at most one session file")
+		_, _ = fmt.Fprintln(stderr, "ctxed overview: expected at most one session file")
 		return ExitUsage
 	}
 	file := ""
@@ -69,7 +69,7 @@ func runOverview(ctx context.Context, args []string, stdout, stderr io.Writer) i
 			f, err = categorizeTopics(ctx, topics, doc.Source, *cmd, *maxCats, *maxInput, tok)
 			if err != nil {
 				// The sizes are still worth showing; only the topic names are missing.
-				fmt.Fprintf(stderr, "ctxed overview: topics unavailable: %v\n", err)
+				_, _ = fmt.Fprintf(stderr, "ctxed overview: topics unavailable: %v\n", err)
 				f = categorize.File{}
 			}
 		}
@@ -97,20 +97,20 @@ func findSession(ctx context.Context, file, id string, stderr io.Writer) (sessio
 		cc, oc := os.Getenv("CLAUDE_CODE_SESSION_ID"), os.Getenv("OPENCODE_SESSION_ID")
 		switch {
 		case cc != "" && oc != "":
-			fmt.Fprintln(stderr, "ctxed overview: both CLAUDE_CODE_SESSION_ID and OPENCODE_SESSION_ID are set; pass --session")
+			_, _ = fmt.Fprintln(stderr, "ctxed overview: both CLAUDE_CODE_SESSION_ID and OPENCODE_SESSION_ID are set; pass --session")
 			return sessionSource{}, ExitUsage
 		case cc != "":
 			id = cc
 		case oc != "":
 			id = oc
 		default:
-			fmt.Fprintln(stderr, "ctxed overview: no session; pass a session file, or --session ID, or run it from inside Claude Code or OpenCode")
+			_, _ = fmt.Fprintln(stderr, "ctxed overview: no session; pass a session file, or --session ID, or run it from inside Claude Code or OpenCode")
 			return sessionSource{}, ExitUsage
 		}
 	}
 	if strings.HasPrefix(id, "ses_") {
 		if err := harness.ValidOpenCodeSession(id); err != nil {
-			fmt.Fprintf(stderr, "ctxed overview: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "ctxed overview: %v\n", err)
 			return sessionSource{}, ExitUsage
 		}
 		return sessionSource{name: id, read: func() ([]byte, error) {
@@ -120,13 +120,13 @@ func findSession(ctx context.Context, file, id string, stderr io.Writer) (sessio
 		}}, ExitOK
 	}
 	if err := harness.ValidClaudeSession(id); err != nil {
-		fmt.Fprintf(stderr, "ctxed overview: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "ctxed overview: %v\n", err)
 		return sessionSource{}, ExitUsage
 	}
 	cwd, _ := os.Getwd()
 	path, err := harness.ClaudeTranscript(id, cwd)
 	if err != nil {
-		fmt.Fprintf(stderr, "ctxed overview: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "ctxed overview: %v\n", err)
 		return sessionSource{}, ExitError
 	}
 	return sessionSource{name: id, read: func() ([]byte, error) { return os.ReadFile(path) }}, ExitOK

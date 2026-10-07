@@ -96,7 +96,7 @@ func Save(dir string, s State) error {
 	if err := ValidSession(s.Session); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: a state dir under the home directory, shared with the plugin.
 		return err
 	}
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -115,12 +115,12 @@ func Save(dir string, s State) error {
 		return err
 	}
 	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	return os.Rename(tmp.Name(), Path(dir, s.Session))

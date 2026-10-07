@@ -68,8 +68,8 @@ func ExportOpenCode(ctx context.Context, sessionID string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	defer func() { _ = tmp.Close() }()
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, "session", "export", sessionID)
 	cmd.Stdout = tmp
@@ -91,6 +91,7 @@ func ExportOpenCode(ctx context.Context, sessionID string) ([]byte, error) {
 // its JSON event stream. The throwaway session it creates is deleted after.
 type OpenCodeRun struct{ Model string }
 
+// Complete sends the prompt to `opencode run` and returns the text it streams.
 func (c OpenCodeRun) Complete(ctx context.Context, prompt string) (string, error) {
 	bin, err := OpenCodeBin()
 	if err != nil {

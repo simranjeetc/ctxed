@@ -46,6 +46,7 @@ func init() { adapter.Register(&Adapter{}) }
 // Adapter implements adapter.Adapter for Claude Code transcripts.
 type Adapter struct{}
 
+// Name returns the adapter's registered name.
 func (a *Adapter) Name() string { return "claude-code" }
 
 // Detect reports whether data is a Claude Code transcript: line-oriented JSON

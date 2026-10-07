@@ -204,7 +204,7 @@ func FuzzParse(f *testing.F) {
 		}
 		f.Add(data)
 	}
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		// Parse must never panic on arbitrary input.
 		_, _ = (&claude.Adapter{}).Parse(data)
 	})

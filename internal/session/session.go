@@ -14,6 +14,7 @@ import (
 // Kind classifies a conversation entry.
 type Kind string
 
+// Conversation entry kinds.
 const (
 	KindMessage    Kind = "message"
 	KindToolCall   Kind = "tool-call"
@@ -25,6 +26,7 @@ const (
 // Format is the on-disk shape of a session document.
 type Format string
 
+// On-disk document formats.
 const (
 	FormatJSON  Format = "json"
 	FormatJSONL Format = "jsonl"
@@ -76,9 +78,9 @@ func Preview(text string) string {
 		text = text[:i]
 	}
 	text = strings.TrimSpace(text)
-	const max = 80
-	if utf8.RuneCountInString(text) > max {
-		text = string([]rune(text)[:max]) + "…"
+	const maxLen = 80
+	if utf8.RuneCountInString(text) > maxLen {
+		text = string([]rune(text)[:maxLen]) + "…"
 	}
 	return text
 }
