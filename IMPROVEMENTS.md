@@ -21,6 +21,10 @@ Rules for the implementer:
    yourself before you stop.
 5. If you cannot finish, write the reason to `.verify/improve/<task id>.blocked`
    and stop.
+6. In a move task, "unchanged" covers the code, not file-level metadata. A file
+   you create starts with a bare `package cli`; a package keeps exactly one
+   package doc comment, in the file that already had it. Copy nothing else
+   (imports are re-derived by the tools).
 
 Tasks marked `(manual)` need the owner. Skip a task marked `(needs Txx)`
 while Txx is unticked. Change a task or its Check only by editing and committing
