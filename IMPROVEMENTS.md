@@ -75,7 +75,7 @@ this file yourself.
 
 ## Correctness
 
-- [ ] **T12 Accept a single topic.** `categorize.Parse` rejects fewer than 2 categories ("at least 2 are required"). Allow 1. Update the prompt text and tests to match.
+- [x] **T12 Accept a single topic.** `categorize.Parse` rejects fewer than 2 categories ("at least 2 are required"). Allow 1. Update the prompt text and tests to match.
   Check: `go test ./internal/categorize`
 
 - [ ] **T13 Cancel on Ctrl-C.** In `cmd/ctxed/main.go`, create a context with `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)` and pass it down, replacing `context.Background()` in `internal/cli/overview.go`.

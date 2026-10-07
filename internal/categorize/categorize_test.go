@@ -124,8 +124,16 @@ func TestParseExtractsJSONFromProse(t *testing.T) {
 func TestParseEnforcesCategoryBounds(t *testing.T) {
 	doc := loadDoc(t)
 	one := `{"categories":[{"label":"only","ids":["` + doc.Entries[0].ID + `"]}]}`
-	if _, err := categorize.Parse(one, doc, tokenize.Approximation{}, 5); err == nil {
-		t.Fatal("expected an error for fewer than two categories")
+	f, err := categorize.Parse(one, doc, tokenize.Approximation{}, 5)
+	if err != nil {
+		t.Fatalf("expected a single category to parse: %v", err)
+	}
+	if len(f.Categories) != 1 {
+		t.Fatalf("got %d categories, want 1", len(f.Categories))
+	}
+	zero := `{"categories":[]}`
+	if _, err := categorize.Parse(zero, doc, tokenize.Approximation{}, 5); err == nil {
+		t.Fatal("expected an error for zero categories")
 	}
 	many := `{"categories":[{"label":"1","ids":["a"]},{"label":"2","ids":["b"]},{"label":"3","ids":["c"]},{"label":"4","ids":["d"]},{"label":"5","ids":["e"]},{"label":"6","ids":["f"]}]}`
 	if _, err := categorize.Parse(many, doc, tokenize.Approximation{}, 5); err == nil {
@@ -215,6 +223,13 @@ func TestParseStatusAndPending(t *testing.T) {
 	}
 	if len(f.Pending) != 5 || f.Pending[0] != "set the URL" {
 		t.Fatalf("pending %q", f.Pending)
+	}
+}
+
+func TestPromptAllowsSingleCategory(t *testing.T) {
+	p := categorize.Prompt(loadDoc(t), 5, 30000)
+	if !strings.Contains(p, "between 1 and 5") {
+		t.Fatal("prompt does not allow a single category")
 	}
 }
 

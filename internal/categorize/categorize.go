@@ -68,7 +68,7 @@ type File struct {
 func Prompt(doc *session.Document, max int, maxBytes int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are given the entries of a working session, oldest first.\n")
-	fmt.Fprintf(&b, "Group them into between 2 and %d high-level categories that describe what the session is about\n", max)
+	fmt.Fprintf(&b, "Group them into between 1 and %d high-level categories that describe what the session is about\n", max)
 	fmt.Fprintf(&b, "(for example \"Claude Code adapter work\", \"OpenCode investigation\").\n")
 	fmt.Fprintf(&b, "Refer to entries by their [number]; give a run of consecutive entries as a range like \"4-17\".\n")
 	fmt.Fprintf(&b, "Assign every entry to exactly one category.\n")
@@ -171,8 +171,8 @@ type modelResponse struct {
 // Parse turns a model response into a validated File, resolving ids against the
 // session and enforcing the category bounds.
 func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) (File, error) {
-	if max < 2 {
-		max = 2
+	if max < 1 {
+		max = 1
 	}
 	raw, err := extractJSON(text)
 	if err != nil {
@@ -182,8 +182,8 @@ func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) 
 	if err := json.Unmarshal([]byte(raw), &mr); err != nil {
 		return File{}, fmt.Errorf("model response is not categorization JSON: %w", err)
 	}
-	if len(mr.Categories) < 2 {
-		return File{}, fmt.Errorf("model returned %d categories; at least 2 are required", len(mr.Categories))
+	if len(mr.Categories) < 1 {
+		return File{}, fmt.Errorf("model returned %d categories; at least 1 is required", len(mr.Categories))
 	}
 	if len(mr.Categories) > max {
 		return File{}, fmt.Errorf("model returned %d categories; the maximum is %d", len(mr.Categories), max)
@@ -220,8 +220,8 @@ func Parse(text string, doc *session.Document, tok tokenize.Tokenizer, max int) 
 			f.Categories = append(f.Categories, cat)
 		}
 	}
-	if len(f.Categories) < 2 {
-		return File{}, fmt.Errorf("after resolving ids, fewer than 2 categories have entries")
+	if len(f.Categories) < 1 {
+		return File{}, fmt.Errorf("after resolving ids, no category has entries")
 	}
 	for i := range f.Categories {
 		f.Categories[i].ID = i + 1
