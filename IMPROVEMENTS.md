@@ -134,7 +134,7 @@ this file yourself.
 - [x] **T28 Add Dependabot** in `.github/dependabot.yml` for gomod and github-actions, weekly.
   Check: `test -f .github/dependabot.yml`
 
-- [ ] **T29 Split `internal/cli/cli.go`** into one file per command (`inspect.go`, `categorize.go`, `common.go`), moving code without changing it.
+- [x] **T29 Split `internal/cli/cli.go`** into one file per command (`inspect.go`, `categorize.go`, `common.go`), moving code without changing it.
   Check: `go test ./internal/cli && [ $(wc -l < internal/cli/cli.go) -lt 200 ]`
 
 - [ ] **T30 Tidy the repo root.** Add `show-me-*.html` to `.gitignore`. Do not delete the files.
