@@ -111,7 +111,7 @@ this file yourself.
 - [x] **T21 Golden-file test for the overview table.** Save the rendered table as `internal/overview/testdata/table.golden`, compare against it, and regenerate it when `-update` is passed.
   Check: `test -f internal/overview/testdata/table.golden && go test ./internal/overview`
 
-- [ ] **T22 Tests for `internal/harness`.** Put a fake `opencode` and a fake `claude` shell script on a temp PATH, then test `OpenCodeBin`, `ExportOpenCode`, `ClaudePrint.Complete` and `ClaudeTranscript`.
+- [x] **T22 Tests for `internal/harness`.** Put a fake `opencode` and a fake `claude` shell script on a temp PATH, then test `OpenCodeBin`, `ExportOpenCode`, `ClaudePrint.Complete` and `ClaudeTranscript`.
   Check: `go test -cover ./internal/harness | grep -qE 'coverage: ([7-9][0-9]|100)'`
 
 - [ ] **T23 Tests for `internal/inspect`.**
