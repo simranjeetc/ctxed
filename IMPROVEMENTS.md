@@ -84,7 +84,7 @@ this file yourself.
 - [x] **T14 Wrap errors with %w.** In `internal/harness/*.go` and `internal/model/model.go`, change `fmt.Errorf(... %v ..., err)` to `%w` wherever an error value is wrapped.
   Check: `! grep -rnE 'Errorf\(.*%v.*err\)' internal/harness internal/model`
 
-- [ ] **T15 Handle the ReadAll error** in `internal/model/model.go` (`raw, _ := io.ReadAll(...)`).
+- [x] **T15 Handle the ReadAll error** in `internal/model/model.go` (`raw, _ := io.ReadAll(...)`).
   Check: `! grep -n 'raw, _ :=' internal/model/model.go`
 
 - [ ] **T16 Bound the opencode cleanup.** In `internal/harness/opencode.go`, run `session delete` with a 10s context and print a failure to stderr instead of discarding it.

@@ -101,7 +101,10 @@ func (c *openAIClient) Complete(ctx context.Context, prompt string) (string, err
 		return "", fmt.Errorf("model request: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", fmt.Errorf("model response read: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("model endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
