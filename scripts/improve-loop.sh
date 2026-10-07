@@ -12,7 +12,7 @@
 #   scripts/improve-loop.sh --dry-run  # show the next task and its check
 #
 # Env: IMPROVE_MODEL (default haiku), REVIEW_MODEL (default sonnet),
-#      IMPROVE_ATTEMPTS (default 3), CLAUDE_BIN (default claude).
+#      IMPROVE_ATTEMPTS (default 1), CLAUDE_BIN (default claude).
 #
 # A failed check or review is retried from the committed tree, with the reason
 # passed to the next attempt; each failed attempt is kept in `git stash`. Rule
@@ -27,7 +27,7 @@ REVIEWER=${REVIEW_MODEL:-sonnet}
 CLAUDE=${CLAUDE_BIN:-claude}
 LOGDIR=.verify/improve
 MAX=1000
-ATTEMPTS=${IMPROVE_ATTEMPTS:-3}
+ATTEMPTS=${IMPROVE_ATTEMPTS:-1}
 DRY=0
 
 while [ $# -gt 0 ]; do
@@ -51,10 +51,10 @@ is_ticked() { spec | grep -qE "^- \[x\] \*\*$1 "; }
 # next_task prints the first open task that is not manual and whose
 # "(needs Txx)" dependency, if any, is ticked.
 next_task() {
-	spec | grep -E '^- \[ \] \*\*T[0-9]+' | while read -r line; do
-		id=$(sed -E 's/^- \[ \] \*\*(T[0-9]+).*/\1/' <<<"$line")
+	spec | grep -E '^- \[ \] \*\*T[0-9]+[a-z]?' | while read -r line; do
+		id=$(sed -E 's/^- \[ \] \*\*(T[0-9]+[a-z]?).*/\1/' <<<"$line")
 		case $line in *"(manual)"*) continue ;; esac
-		dep=$(grep -oE '\(needs T[0-9]+\)' <<<"$line" | grep -oE 'T[0-9]+')
+		dep=$(grep -oE '\(needs T[0-9]+[a-z]?\)' <<<"$line" | grep -oE 'T[0-9]+[a-z]?')
 		if [ -n "$dep" ] && ! is_ticked "$dep"; then continue; fi
 		echo "$id"
 		return
@@ -65,7 +65,7 @@ next_task() {
 task_block() {
 	spec | awk -v id="$1" '
 		$0 ~ "^- \\[[ x]\\] \\*\\*" id " " { on = 1; print; next }
-		on && (/^- \[[ x]\] \*\*T[0-9]+/ || /^## /) { exit }
+		on && (/^- \[[ x]\] \*\*T[0-9]+[a-z]?/ || /^## /) { exit }
 		on { print }'
 }
 
