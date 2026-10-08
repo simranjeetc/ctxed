@@ -61,6 +61,8 @@ func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 	// default build reaches it.
 	case "overview":
 		return runOverview(ctx, args[1:], stdout, stderr)
+	// inspect and categorize are intentionally undocumented: they stay
+	// dispatchable for scripting, but usage() does not advertise them.
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
 	case "categorize":
@@ -86,21 +88,15 @@ func usage(w io.Writer) {
 Usage:
   ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD]
                 [--max-categories N] [--no-model]
-  ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
-  ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
-                [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
   ctxed update [--check] [--force]
 
-  <session> is a Claude Code transcript (.jsonl) or an OpenCode export (.json);
-  for categorize it may be "-" to read stdin. overview with no <session> uses
-  --session, else the session it runs in (CLAUDE_CODE_SESSION_ID or
-  OPENCODE_SESSION_ID).
+  <session> is a Claude Code transcript (.jsonl) or an OpenCode export (.json).
+  overview with no <session> uses --session, else the session it runs in
+  (CLAUDE_CODE_SESSION_ID or OPENCODE_SESSION_ID).
 
 Commands:
   overview    topics in the live context, each with messages, tokens, share and
               status, plus what is still pending (read-only)
-  inspect     print each live entry: index, role, kind, tokens, first-line preview
-  categorize  group entries into high-level categories and write an editable file
   update      replace this binary with the latest release (verifies checksums)
 
 Token counts are estimates unless --model/--tokenizer selects a real tokenizer.
