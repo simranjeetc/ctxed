@@ -25,18 +25,14 @@ import (
 // Repo is the GitHub repository ctxed releases are published to.
 const Repo = "simranjeetc/ctxed"
 
-// Endpoint defaults. They are fields on Client so tests can point elsewhere.
-const (
-	defaultAPIBase      = "https://api.github.com"
-	defaultDownloadBase = "https://github.com"
-)
+// Endpoint default. It is a field on Client so tests can point elsewhere.
+const defaultAPIBase = "https://api.github.com"
 
 // Client resolves and downloads releases.
 type Client struct {
-	Repo         string
-	APIBase      string
-	DownloadBase string
-	HTTP         *http.Client
+	Repo    string
+	APIBase string
+	HTTP    *http.Client
 }
 
 func (c *Client) repo() string {
@@ -51,13 +47,6 @@ func (c *Client) api() string {
 		return strings.TrimRight(c.APIBase, "/")
 	}
 	return defaultAPIBase
-}
-
-func (c *Client) download() string {
-	if c.DownloadBase != "" {
-		return strings.TrimRight(c.DownloadBase, "/")
-	}
-	return defaultDownloadBase
 }
 
 func (c *Client) http() *http.Client {
