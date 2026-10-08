@@ -1,7 +1,7 @@
 {
   "info": {
-    "id": "ses_efe069e89ffe3fa2FQPgpeLcTv",
-    "projectID": "bef1ef14eec34e40c6fc021708de1d0207597f03",
+    "id": "ses_00000000000000000000000001",
+    "projectID": "0000000000000000000000000000000000000000",
     "agent": "build",
     "model": {
       "id": "deepseek-v4.1-flash",
@@ -24,14 +24,14 @@
       "updated": 1791041438102,
       "idle": 1791041317747
     },
-    "title": "OpenSpec setup for ctxed context editor",
+    "title": "Fixture session",
     "location": {
-      "directory": "/Users/simran/codebase/ctxed"
+      "directory": "/home/dev/project"
     }
   },
   "messages": [
     {
-      "id": "msg_101f96175001KNBHKRACZI25DD",
+      "id": "msg_00000000000000000000000001",
       "metadata": {
         "displayText": "## Context Editor (latest idea, strong candidate)\nInspect and manually edit an agent's context window before the next turn — pruning/compaction made visible and steerable instead of an automatic black-box heuristic.\n\nMechanism:\nAgent turn N completes -> dump context (messages array) -> ctxed shows each entry (index, role, token count, preview) -> mark entries keep/drop/collapse-to-summary -> write…[truncated]",
         "comments": [],
@@ -51,7 +51,7 @@
       "type": "user"
     },
     {
-      "id": "msg_101f9625c001NLzjIh2rzpuhNj",
+      "id": "msg_00000000000000000000000002",
       "time": {
         "created": 1791034483310,
         "streamed": 1791034486113,
@@ -67,7 +67,7 @@
       "content": [
         {
           "type": "reasoning",
-          "text": "Let me understand what the user wants. They've given a context about a \"Context Editor\" idea, and the last line says \"use openspec\". They're in `/Users/simran/codebase/ctxed`, not a git repo.\n\nLet me look at the current state of the directory first. \"use openspec\" likely means use OpenSpec (the spec-driven development tool/methodology). Let me check what's in the working directory and whether open…[truncated]",
+          "text": "Let me understand what the user wants. They've given a context about a \"Context Editor\" idea, and the last line says \"use openspec\". They're in `/home/dev/project`, not a git repo.\n\nLet me look at the current state of the directory first. \"use openspec\" likely means use OpenSpec (the spec-driven development tool/methodology). Let me check what's in the working directory and whether open…[truncated]",
           "state": {
             "reasoningField": "reasoning_content"
           },
@@ -78,7 +78,7 @@
         },
         {
           "type": "tool",
-          "id": "call_00_ws8pzr23aam9s5tkfc51fir0",
+          "id": "call_00_0000000000000000000000000",
           "name": "shell",
           "executed": false,
           "state": {
@@ -89,7 +89,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "/Users/simran/codebase/ctxed\ntotal 0\ndrwxr-xr-x@  2 simran  staff   64 Oct  3 19:04 .\ndrwx------@ 20 simran  staff  640 Oct  3 19:04 ..\n"
+                "text": "/home/dev/project\ntotal 0\ndrwxr-xr-x@  2 dev  staff   64 Oct  3 19:04 .\ndrwx------@ 20 dev  staff  640 Oct  3 19:04 ..\n"
               }
             ],
             "metadata": {
@@ -106,7 +106,7 @@
         },
         {
           "type": "tool",
-          "id": "call_01_atir7bpa0b318mpelqh4foby",
+          "id": "call_01_0000000000000000000000000",
           "name": "shell",
           "executed": false,
           "state": {
@@ -117,7 +117,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "openspec not found\n---\ntotal 8\ndrwxr-xr-x@  3 simran  staff   96 Oct  1 20:45 .\ndrwxr-xr-x@ 15 simran  staff  480 Oct  3 16:02 ..\n-rw-r--r--@  1 simran  staff  107 Oct  1 20:45 config.json\n---\napi-tokens\nblogs\ncode-gen-evals\nctxed\ndefault.profraw\ndiscussions\ndotfiles\nevals-demo\ngo-interviews\nhetzner-dev-box\njava-interview-practice\njava-interviews\nopencode-handoff-on-context\nopencode-remote-data\nos…[truncated]"
+                "text": "openspec not found\n---\ntotal 8\ndrwxr-xr-x@  3 dev  staff   96 Oct  1 20:45 .\ndrwxr-xr-x@ 15 dev  staff  480 Oct  3 16:02 ..\n-rw-r--r--@  1 dev  staff  107 Oct  1 20:45 config.json\n---\nnotes\ndrafts\nsrc\n[truncated]"
               }
             ],
             "metadata": {
@@ -147,7 +147,7 @@
       }
     },
     {
-      "id": "msg_101f9c3ce001IFwpS4ckJjLXtH",
+      "id": "msg_00000000000000000000000003",
       "time": {
         "created": 1791034508238
       },
@@ -155,7 +155,7 @@
       "outcome": "interrupted"
     },
     {
-      "id": "msg_101fa7d2c001mjc3xnA3G4SmoW",
+      "id": "msg_00000000000000000000000004",
       "metadata": {
         "notice": "instructions",
         "instructionSources": [

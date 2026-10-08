@@ -1,16 +1,15 @@
 # Build output
 /ctxed
+/dist/
 
 # ctxed write outputs
 *.edited.json
 *.edited.jsonl
 *.categories.json
 
-# macOS
-.DS_Store
-show-me-*.html
+# Local verification scratch
 .verify/
 .archify/
 
-# OpenCode plugin install (deps are regenerable; the bundle is committed)
-.opencode/node_modules/
+# macOS
+.DS_Store

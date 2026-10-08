@@ -189,8 +189,8 @@ func TestPruneByCategoryIsNonDestructive(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("unexpected stderr: %q", stderr)
 	}
-	const prunedID = "msg_101f9625c001NLzjIh2rzpuhNj" // category 2
-	const keptID = "msg_101f96175001KNBHKRACZI25DD"   // category 1
+	const prunedID = "msg_00000000000000000000000002" // category 2
+	const keptID = "msg_00000000000000000000000001"   // category 1
 	if strings.Contains(stdout, prunedID) {
 		t.Fatalf("pruned id still present:\n%s", stdout)
 	}
@@ -216,7 +216,7 @@ func TestPruneResolvesOrphanAndReports(t *testing.T) {
 	if !strings.Contains(stderr, "adjustment:") {
 		t.Fatalf("expected an adjustment on stderr, got %q", stderr)
 	}
-	for _, id := range []string{"61e80e18", "46cb1fcf", "c3990fee"} {
+	for _, id := range []string{"aaaaaaaa", "bbbbbbbb", "cccccccc"} {
 		if strings.Contains(stdout, id) {
 			t.Fatalf("entry %s should have been pruned:\n%s", id, stdout)
 		}
@@ -301,7 +301,7 @@ func TestPluginRoleThinSubstitution(t *testing.T) {
 		t.Fatalf("plugin cannot parse the transcript: %v", err)
 	}
 	for _, m := range doc.Messages {
-		if m.ID == "msg_101f9625c001NLzjIh2rzpuhNj" {
+		if m.ID == "msg_00000000000000000000000002" {
 			t.Fatal("pruned message still in the plugin's mapped transcript")
 		}
 	}
@@ -418,7 +418,7 @@ func TestPruneHonorsEditedCategoriesFile(t *testing.T) {
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "msg_101f9625c001NLzjIh2rzpuhNj") {
+	if !strings.Contains(stdout, "msg_00000000000000000000000002") {
 		t.Fatal("edit not honored: the moved entry should be retained")
 	}
 }
@@ -437,7 +437,7 @@ func TestPruneIDsOnlyByCategory(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
 		t.Fatalf("stdout is not a JSON object: %v\n%s", err, stdout)
 	}
-	want := []string{"msg_101f9625c001NLzjIh2rzpuhNj"} // category 2
+	want := []string{"msg_00000000000000000000000002"} // category 2
 	if !reflect.DeepEqual(r.DroppedIDs, want) {
 		t.Fatalf("droppedIds = %v, want %v", r.DroppedIDs, want)
 	}
@@ -448,7 +448,7 @@ func TestPruneIDsOnlyByCategory(t *testing.T) {
 
 func TestPruneIDsOnlyByExplicitID(t *testing.T) {
 	in := copyFixture(t, opencodeFixture)
-	const id = "msg_101f96175001KNBHKRACZI25DD"
+	const id = "msg_00000000000000000000000001"
 	code, stdout, stderr := run("prune", in, "--ids", id, "--ids-only")
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d stderr %q", code, stderr)
@@ -484,9 +484,9 @@ func TestPruneIDsOnlyReflectsOrphanResolution(t *testing.T) {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
 	}
 	want := []string{
-		"61e80e18-146b-46e3-bd72-c6bc5e568a42",
-		"46cb1fcf-1731-4bd3-b5e5-04a35e187404",
-		"c3990fee-117c-4879-90e0-158f2245a45e",
+		"aaaaaaaa-0000-4000-8000-0000000000a1",
+		"bbbbbbbb-0000-4000-8000-0000000000b2",
+		"cccccccc-0000-4000-8000-0000000000c3",
 	}
 	if !reflect.DeepEqual(r.DroppedIDs, want) {
 		t.Fatalf("droppedIds = %v, want %v", r.DroppedIDs, want)
@@ -524,7 +524,7 @@ func TestPruneIDsOnlyEmitsDroppedToolCallIDs(t *testing.T) {
 	// Entry 1 is a tool-call entry: dropping it must also report the tool-call
 	// ids it issued, so a plugin can drop the matching result even when the live
 	// result message carries no id of its own.
-	code, stdout, stderr := run("prune", in, "--ids", "msg_101f9625c001NLzjIh2rzpuhNj", "--ids-only")
+	code, stdout, stderr := run("prune", in, "--ids", "msg_00000000000000000000000002", "--ids-only")
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}

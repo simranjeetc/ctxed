@@ -56,15 +56,17 @@ func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return ExitUsage
 	}
 	switch args[0] {
-	// Pruning (drop, prune, compact-instruction, opencode) is parked: its code
-	// stays in this package but no command reaches it. See
-	// openspec/changes/context-overview.
+	// Pruning (drop, prune, compact-instruction, opencode) is parked behind the
+	// `parked` build tag: the code stays in this package but no command in the
+	// default build reaches it.
 	case "overview":
 		return runOverview(ctx, args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
 	case "categorize":
 		return runCategorize(args[1:], stdin, stdout, stderr)
+	case "update":
+		return runUpdate(ctx, args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return ExitOK
@@ -87,6 +89,7 @@ Usage:
   ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
   ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
+  ctxed update [--check] [--force]
 
   <session> is a Claude Code transcript (.jsonl) or an OpenCode export (.json);
   for categorize it may be "-" to read stdin. overview with no <session> uses
@@ -98,6 +101,7 @@ Commands:
               status, plus what is still pending (read-only)
   inspect     print each live entry: index, role, kind, tokens, first-line preview
   categorize  group entries into high-level categories and write an editable file
+  update      replace this binary with the latest release (verifies checksums)
 
 Token counts are estimates unless --model/--tokenizer selects a real tokenizer.
 Topic status and pending items are a model's reading of the session.
