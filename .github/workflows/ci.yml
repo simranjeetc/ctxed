@@ -7,6 +7,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # GOTOOLCHAIN=auto lets the go command fetch a newer toolchain to build the
+    # analysis tools; the module itself still builds on the go.mod version.
+    env:
+      GOTOOLCHAIN: auto
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -17,7 +21,7 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
       - name: go test -race
         run: go test -race ./...
       - name: govulncheck
