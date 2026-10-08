@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-08
+
 ### Added
 
 - `ctxed update`: replace the binary with the latest release, verified against
@@ -38,5 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cloning the repo.
 - Release archives (linux/darwin, amd64/arm64) with checksums via goreleaser.
 
-[Unreleased]: https://github.com/simranjeetc/ctxed/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/simranjeetc/ctxed/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/simranjeetc/ctxed/releases/tag/v0.1.1
 [0.1.0]: https://github.com/simranjeetc/ctxed/releases/tag/v0.1.0
