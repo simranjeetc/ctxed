@@ -12,11 +12,12 @@ in Claude Code and OpenCode. Read-only — ctxed never changes a session.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/simranjeetc/ctxed/main/install.sh | sh
+curl -fsSL https://github.com/simranjeetc/ctxed/releases/latest/download/install.sh | sh
 ```
 
 Installs the `ctxed` binary and the `ctxed-overview` skill for Claude Code and
-OpenCode. Prefer Go? `go install github.com/simranjeetc/ctxed/cmd/ctxed@latest`.
+OpenCode. Update later with `ctxed update`. Prefer Go?
+`go install github.com/simranjeetc/ctxed/cmd/ctxed@latest`.
 
 ## Inside a session: the `ctxed-overview` skill
 
@@ -34,6 +35,7 @@ ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--ma
 ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
 ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
                  [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
+ctxed update [--check] [--force]
 ```
 
 `<session>` is a Claude Code transcript (`.jsonl`) or an OpenCode export
@@ -44,6 +46,7 @@ ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
 | `overview` | Topics in the live context, each with messages, tokens, share and status, plus what is still pending. The reason to use ctxed. |
 | `inspect` | Every live entry: index, role, kind, tokens, first-line preview. The raw rows `overview` sums. |
 | `categorize` | Group entries into 2–5 categories and write an editable `<name>.categories.json`. |
+| `update` | Replace the binary with the latest release, verified against `checksums.txt`. `--check` only reports; `--force` reinstalls. |
 
 **Live context only.** Entries after the last compaction; the compaction is its
 own row (Claude Code's summary, or OpenCode's summary plus the kept tail). Every

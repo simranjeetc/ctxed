@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ctxed update`: replace the binary with the latest release, verified against
+  the release's `checksums.txt`. `--check` reports without installing; `--force`
+  reinstalls.
+
 ## [0.1.0] - 2026-10-08
 
 ### Added

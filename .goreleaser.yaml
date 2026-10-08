@@ -41,3 +41,9 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
+
+release:
+  # Publish install.sh as a release asset so it is reachable at
+  # .../releases/latest/download/install.sh.
+  extra_files:
+    - glob: ./install.sh
