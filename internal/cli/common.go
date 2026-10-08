@@ -69,6 +69,8 @@ func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return runCategorize(args[1:], stdin, stdout, stderr)
 	case "update":
 		return runUpdate(ctx, args[1:], stdout, stderr)
+	case "skill":
+		return runSkill(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return ExitOK
@@ -89,6 +91,7 @@ Usage:
   ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD]
                 [--max-categories N] [--no-model]
   ctxed update [--check] [--force]
+  ctxed skill install
 
   <session> is a Claude Code transcript (.jsonl) or an OpenCode export (.json).
   overview with no <session> uses --session, else the session it runs in
@@ -98,6 +101,7 @@ Commands:
   overview    topics in the live context, each with messages, tokens, share and
               status, plus what is still pending (read-only)
   update      replace this binary with the latest release (verifies checksums)
+  skill       install the ctxed-overview skill into Claude Code and OpenCode
 
 Token counts are estimates unless --model/--tokenizer selects a real tokenizer.
 Topic status and pending items are a model's reading of the session.

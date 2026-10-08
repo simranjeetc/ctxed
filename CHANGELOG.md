@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ctxed update`: replace the binary with the latest release, verified against
   the release's `checksums.txt`. `--check` reports without installing; `--force`
   reinstalls.
+- `ctxed skill install`: write the `ctxed-overview` skill embedded in the binary
+  into Claude Code and OpenCode.
+- `ctxed update` now also refreshes the installed skill, so the binary and the
+  skill cannot drift.
 
 ### Changed
 

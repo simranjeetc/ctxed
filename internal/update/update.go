@@ -94,6 +94,9 @@ type Result struct {
 	From    string
 	To      string
 	Changed bool
+	// Skill is the ctxed-overview skill from the downloaded release, when the
+	// archive carries one. Empty for releases that predate it.
+	Skill []byte
 }
 
 // Update replaces targetPath with the latest release when it is newer than
@@ -139,12 +142,15 @@ func (c *Client) Update(ctx context.Context, current, goos, goarch, targetPath s
 		return res, fmt.Errorf("update: checksum mismatch for %s (want %s, got %s)", asset, want, got)
 	}
 
-	bin, err := ExtractBinary(archive)
+	bin, err := ExtractFile(archive, "ctxed")
 	if err != nil {
 		return res, err
 	}
 	if err := Replace(targetPath, bin); err != nil {
 		return res, err
+	}
+	if s, err := ExtractFile(archive, "SKILL.md"); err == nil {
+		res.Skill = s
 	}
 	res.Changed = true
 	return res, nil
@@ -228,8 +234,9 @@ func isSHA256(s string) bool {
 	return true
 }
 
-// ExtractBinary returns the ctxed binary from a gzip-compressed tar archive.
-func ExtractBinary(archive []byte) ([]byte, error) {
+// ExtractFile returns the first regular file in a gzip-compressed tar archive
+// whose base name matches name.
+func ExtractFile(archive []byte, name string) ([]byte, error) {
 	zr, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return nil, fmt.Errorf("update: open archive: %w", err)
@@ -244,16 +251,16 @@ func ExtractBinary(archive []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("update: read archive: %w", err)
 		}
-		if h.Typeflag != tar.TypeReg || filepath.Base(h.Name) != "ctxed" {
+		if h.Typeflag != tar.TypeReg || filepath.Base(h.Name) != name {
 			continue
 		}
 		data, err := io.ReadAll(io.LimitReader(tr, 64<<20))
 		if err != nil {
-			return nil, fmt.Errorf("update: read binary: %w", err)
+			return nil, fmt.Errorf("update: read %s: %w", name, err)
 		}
 		return data, nil
 	}
-	return nil, fmt.Errorf("update: archive has no ctxed binary")
+	return nil, fmt.Errorf("update: archive has no %s", name)
 }
 
 // Replace atomically writes data over path, keeping it executable.

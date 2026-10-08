@@ -13,6 +13,7 @@ ctxed categorize <session> [--model M] [--tokenizer ENC] [--base-url URL] [--api
                  [--categorizer-cmd CMD] [--max-categories N]
                  [--max-input-bytes N] [--out FILE]
 ctxed update [--check] [--force]
+ctxed skill install
 ```
 
 `<session>` is a Claude Code transcript (`.jsonl`) or an OpenCode export
@@ -81,12 +82,23 @@ Groups the entries into 2–5 categories and writes an editable
 ## update
 
 Replaces the running binary with the latest release, verified against the
-release's `checksums.txt`.
+release's `checksums.txt`, then refreshes the installed `ctxed-overview` skill
+to match.
 
 | Flag | Meaning |
 | --- | --- |
 | `--check` | report whether a newer release exists, without installing |
 | `--force` | reinstall the latest release even if it is not newer |
+
+## skill
+
+```sh
+ctxed skill install
+```
+
+Writes the `ctxed-overview` skill embedded in this binary into every agent
+harness it finds (Claude Code at `~/.claude`, OpenCode at `~/.config/opencode`).
+`ctxed update` runs this for you after replacing the binary.
 
 ## Environment
 

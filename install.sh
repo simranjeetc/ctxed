@@ -202,17 +202,9 @@ if [ "$PATH_CONFIGURED" = "0" ]; then
 fi
 
 # --- Skill ------------------------------------------------------------------
-if [ "${CTXED_NO_SKILL:-0}" != "1" ] && [ -f "${TMP_DIR}/skills/ctxed-overview/SKILL.md" ]; then
-  if [ -d "${HOME}/.claude" ]; then
-    mkdir -p "${HOME}/.claude/skills/ctxed-overview"
-    cp "${TMP_DIR}/skills/ctxed-overview/SKILL.md" "${HOME}/.claude/skills/ctxed-overview/SKILL.md"
-    info "Installed Claude Code skill: ~/.claude/skills/ctxed-overview"
-  fi
-  if [ -d "${HOME}/.config/opencode" ]; then
-    mkdir -p "${HOME}/.config/opencode/skills/ctxed-overview"
-    cp "${TMP_DIR}/skills/ctxed-overview/SKILL.md" "${HOME}/.config/opencode/skills/ctxed-overview/SKILL.md"
-    info "Installed OpenCode skill: ~/.config/opencode/skills/ctxed-overview (restart OpenCode)"
-  fi
+if [ "${CTXED_NO_SKILL:-0}" != "1" ]; then
+  "$TARGET_BIN" skill install \
+    || warn "Could not install the ctxed-overview skill; run: $TARGET_BIN skill install"
 fi
 
 printf '\nRun %b to see what your session'"'"'s context is made of:\n' "${BOLD}ctxed${RESET}"

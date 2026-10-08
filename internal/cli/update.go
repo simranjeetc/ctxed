@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/simranjeetc/ctxed/internal/skill"
 	"github.com/simranjeetc/ctxed/internal/update"
 )
 
@@ -53,5 +54,12 @@ func runUpdate(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return ExitOK
 	}
 	_, _ = fmt.Fprintf(stdout, "updated ctxed %s -> %s\n", res.From, res.To)
+	if len(res.Skill) > 0 {
+		if home, err := os.UserHomeDir(); err == nil {
+			if _, err := skill.Install(home, res.Skill, stdout); err != nil {
+				_, _ = fmt.Fprintf(stderr, "ctxed: could not refresh the skill: %v\n", err)
+			}
+		}
+	}
 	return ExitOK
 }

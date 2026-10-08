@@ -68,12 +68,12 @@ func TestParseChecksums(t *testing.T) {
 	}
 }
 
-func TestExtractBinary(t *testing.T) {
+func TestExtractFile(t *testing.T) {
 	archive := tarGz(t, map[string]string{
 		"LICENSE": "mit",
 		"ctxed":   "BINARY",
 	})
-	got, err := ExtractBinary(archive)
+	got, err := ExtractFile(archive, "ctxed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,9 +82,9 @@ func TestExtractBinary(t *testing.T) {
 	}
 }
 
-func TestExtractBinaryMissing(t *testing.T) {
-	if _, err := ExtractBinary(tarGz(t, map[string]string{"README.md": "x"})); err == nil {
-		t.Fatal("want error when the archive has no ctxed binary")
+func TestExtractFileMissing(t *testing.T) {
+	if _, err := ExtractFile(tarGz(t, map[string]string{"README.md": "x"}), "ctxed"); err == nil {
+		t.Fatal("want error when the archive has no matching file")
 	}
 }
 
@@ -114,7 +114,10 @@ func TestReplace(t *testing.T) {
 }
 
 func TestUpdateReplacesBinary(t *testing.T) {
-	archive := tarGz(t, map[string]string{"ctxed": "NEW-BINARY"})
+	archive := tarGz(t, map[string]string{
+		"ctxed":                          "NEW-BINARY",
+		"skills/ctxed-overview/SKILL.md": "SKILL-BODY",
+	})
 	asset := "ctxed_9.9.9_linux_amd64.tar.gz"
 
 	var srv *httptest.Server
@@ -157,6 +160,9 @@ func TestUpdateReplacesBinary(t *testing.T) {
 	}
 	if string(got) != "NEW-BINARY" {
 		t.Fatalf("got %q, want NEW-BINARY", got)
+	}
+	if string(res.Skill) != "SKILL-BODY" {
+		t.Fatalf("skill = %q, want SKILL-BODY", res.Skill)
 	}
 }
 
