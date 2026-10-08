@@ -71,9 +71,8 @@ created by the script and deleted afterwards:
 | Cleanup | scratch session deleted | scratch project dir deleted |
 | Last run (2026-10-06) | 9 hard pass, 1 soft pass, ~25 s | 9 hard pass, 1 soft pass, ~75 s |
 
-The old prune scenarios are parked with the pruning code, in
-`parked/verify-prune-functionally.sh`; they cannot run against the current
-binary.
+The old prune scenarios are parked with the pruning code (behind the `parked`
+build tag); they cannot run against the current binary.
 
 ## Reports (the verifier's contract)
 

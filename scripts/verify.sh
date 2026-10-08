@@ -2,7 +2,7 @@
 # Modular verification for ctxed.
 #
 # Usage:
-#   scripts/verify.sh                 # offline checks: build, unit tests, vet, openspec, parked plugin
+#   scripts/verify.sh                 # offline checks: build, unit tests, vet, parked unreachable
 #   scripts/verify.sh --workspaces    # the above, run in every worktree of this repository
 #   scripts/verify.sh --live          # add the live, opt-in checks (Claude Code / OpenCode)
 #   scripts/verify.sh --all           # offline + live
@@ -104,16 +104,6 @@ check_go_build()      { need go "Go toolchain" || return 1; build_binary; }
 check_go_vet()        { go vet ./...; }
 check_go_test()       { go clean -testcache && go test ./...; }
 check_tokenizer_real() { CTXED_TEST_TIKTOKEN=1 go test ./internal/tokenize/; }
-check_openspec() {
-  need openspec "OpenSpec CLI" || return 1
-  # Validate every change directory. Archived changes live under changes/archive.
-  local d ok=1
-  for d in openspec/changes/*/; do
-    [[ -f "$d/proposal.md" ]] || continue
-    openspec validate "$(basename "$d")" --strict >/dev/null || ok=0
-  done
-  [[ $ok -eq 1 ]]
-}
 
 # --- CLI behavior on the shipped fixtures (approximate tokenizer, no model) ---
 
@@ -155,20 +145,9 @@ check_offline_purity() {
   build_binary || return 1
   local tmp; tmp="$(mktemp -d)"
   "$BIN" categorize testdata/claude_session.jsonl \
-      --categorizer-cmd 'echo "{\"categories\":[{\"label\":\"all\",\"ids\":[\"61e80e18-146b-46e3-bd72-c6bc5e568a42\"]},{\"label\":\"tool\",\"ids\":[\"c3990fee-117c-4879-90e0-158f2245a45e\"]}]}"' \
+      --categorizer-cmd 'echo "{\"categories\":[{\"label\":\"all\",\"ids\":[\"aaaaaaaa-0000-4000-8000-0000000000a1\"]},{\"label\":\"tool\",\"ids\":[\"cccccccc-0000-4000-8000-0000000000c3\"]}]}"' \
       --out "$tmp/out.json" >/dev/null 2>&1 || return 1
   [[ -s "$tmp/out.json" ]]
-}
-
-# --- Parked: the OpenCode prune plugin's own tests still run ---
-
-check_plugin_opencode_tests() {
-  local dir="plugin/opencode"
-  need node "Node.js" || return 1
-  need npm "npm" || return 1
-  [[ -d "$dir" ]] || { echo "missing $dir"; return 1; }
-  [[ -d "$dir/node_modules" ]] || ( cd "$dir" && npm install --silent --no-audit --no-fund ) >/dev/null 2>&1 || true
-  ( cd "$dir" && node --test test/ )
 }
 
 # ---------------------------------------------------------------------------
@@ -188,17 +167,11 @@ run_offline() {
   run "go:test"             check_go_test
   run "go:tokenizer-real"   check_tokenizer_real
 
-  note "offline: openspec"
-  run "openspec:validate"   check_openspec
-
   note "offline: cli"
   run "cli:inspect"                 check_cli_inspect
   run "cli:overview"                check_cli_overview
   run "cli:parked unreachable"      check_cli_parked_unreachable
   run "cli:offline purity"          check_offline_purity
-
-  note "offline: parked plugin/opencode"
-  run "parked:plugin:opencode:tests" check_plugin_opencode_tests
 }
 
 run_live() {

@@ -2,60 +2,30 @@
 
 [![CI](https://github.com/simranjeetc/ctxed/actions/workflows/ci.yml/badge.svg)](https://github.com/simranjeetc/ctxed/actions/workflows/ci.yml)
 
-See what an agent session's context is made of: which topics it holds, how many
-tokens each takes, which are done, and what is still pending. Works the same in
-Claude Code and OpenCode. Read-only: ctxed never changes a session.
+See what an agent session's **context** is made of: which topics it holds, how
+many tokens each takes, which are done, and what is still pending. Works the same
+in Claude Code and OpenCode. Read-only — ctxed never changes a session.
 
-```
-$ ctxed overview
-Session ses_ef89… · live context: 14 messages · ~86.4k tokens (estimate)
+![ctxed overview in Claude Code](docs/overview-claude.png)
+![ctxed overview in OpenCode](docs/overview-opencode.png)
 
- #   Topic                                         Msgs   Tokens  Share  Status
- 1   Direct API publish instead of GitHub Action      4    11.2k    13%  in progress
- 2   Digest URL publish-chain investigation           5     4.6k     5%  done
- 3   Pending steps recap                              4     2.3k     3%  done
-     Compaction summary + kept tail                   1    68.2k    79%  —
+## Install
 
-Pending: digest_url still unset; Move email (send_digest) ahead of dossiers
-
-Not counted: 690 messages from before the last compaction.
+```sh
+curl -fsSL https://raw.githubusercontent.com/simranjeetc/ctxed/main/install.sh | sh
 ```
 
-You decide what to do with it: carry on, compact, or start a new session.
-
-![demo](docs/demo.gif)
+Installs the `ctxed` binary and the `ctxed-overview` skill for Claude Code and
+OpenCode. Prefer Go? `go install github.com/simranjeetc/ctxed/cmd/ctxed@latest`.
 
 ## Inside a session: the `ctxed-overview` skill
 
 One skill, [`skills/ctxed-overview/`](skills/ctxed-overview/), for both
-harnesses. Ask "what's in my context?" (or `/ctxed-overview`); the agent runs
-`ctxed overview` and shows the table as printed.
-
-```
- Claude Code                    OpenCode
- skill: ctxed-overview          skill: ctxed-overview  (same file)
-        │                              │
-        └──────── ctxed overview ──────┘
-                       │
-   find session   CLAUDE_CODE_SESSION_ID → ~/.claude/projects/*/<id>.jsonl
-                  OPENCODE_SESSION_ID    → opencode session export <id>
-   live context   only what follows the last compaction, plus the compaction
-   topics         one cheap model call: claude -p (Haiku) / opencode run
-   print          table, or --json
-```
-
-There is no plugin and nothing in the request path.
-
-### Install
-
-```sh
-go install github.com/simranjeetc/ctxed/cmd/ctxed@latest   # ~/go/bin/ctxed
-ln -s "$PWD/skills/ctxed-overview" ~/.claude/skills/        # Claude Code
-mkdir -p ~/.config/opencode/skills/ctxed-overview \
-  && cp skills/ctxed-overview/SKILL.md ~/.config/opencode/skills/ctxed-overview/   # OpenCode
-```
-
-Restart OpenCode's server afterwards; it loads skills at start.
+harnesses. Ask *"what's in my context?"* (or `/ctxed-overview`); the agent runs
+`ctxed overview` and shows the table as printed. It resolves the session from the
+harness it runs in — `CLAUDE_CODE_SESSION_ID` → `~/.claude/projects/*/<id>.jsonl`,
+`OPENCODE_SESSION_ID` → `opencode session export <id>`. There is no plugin and
+nothing in the request path.
 
 ## Usage
 
@@ -69,78 +39,25 @@ ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
 `<session>` is a Claude Code transcript (`.jsonl`) or an OpenCode export
 (`opencode session export <id> > s.json`).
 
-### overview
+| Command | What it does |
+| --- | --- |
+| `overview` | Topics in the live context, each with messages, tokens, share and status, plus what is still pending. The reason to use ctxed. |
+| `inspect` | Every live entry: index, role, kind, tokens, first-line preview. The raw rows `overview` sums. |
+| `categorize` | Group entries into 2–5 categories and write an editable `<name>.categories.json`. |
 
-- **Session**: a file argument, else `--session` (a Claude Code UUID or an
-  OpenCode `ses_…` id), else the session the command runs in. If both harness
-  variables are set it refuses and asks for `--session`.
-- **Live context only**: entries after the last compaction. The compaction is
-  its own row: Claude Code's summary, or OpenCode's summary plus the recent
-  messages it keeps verbatim (often the largest row).
-- **Every live message is in exactly one row**, and the totals equal
-  `ctxed inspect`. The categorizer sees a sample of a long session; an entry it
-  did not see joins the topic of the nearest entry before it.
-- **Status and pending** are the model's reading of the session: `done`,
-  `in progress`, or `?` when it gave none.
-- **If the model call fails**, the sizes are still printed, as one
-  "Whole session" row, and the error goes to stderr.
-- **`--no-model`** skips the categorizer entirely and prints only the
-  whole-session sizes, as a single "Whole session" row. No session content is
-  sent to a model.
-- **Categorizer**: `--categorizer-cmd` or `CTXED_CATEGORIZER_CMD` (prompt on
-  stdin, answer on stdout), else the harness's own CLI — `claude -p --model
-  haiku` for Claude Code, `opencode run --model opencode-go/deepseek-v4-flash`
-  for OpenCode. `CTXED_CATEGORIZER_MODEL` overrides the model.
-  `CTXED_CLAUDE_BIN` / `CTXED_OPENCODE_BIN` point at the CLIs if they are not on
-  PATH.
+**Live context only.** Entries after the last compaction; the compaction is its
+own row (Claude Code's summary, or OpenCode's summary plus the kept tail). Every
+live message lands in exactly one row, and the totals match `ctxed inspect`.
 
-### inspect
+**No model call:** `overview --no-model` skips the categorizer and prints the
+whole-session sizes as one row, sending nothing anywhere. `overview` and
+`categorize` otherwise send excerpts to the categorizer (the harness's own cheap
+model by default, or whatever `--categorizer-cmd` / `--model` / `--base-url`
+select). Those excerpts leave the machine only if that model is remote.
 
-```sh
-$ ctxed inspect session.json
-IDX  ROLE       KIND       TOKENS  PREVIEW
-0    user       message    103     add retry to the upload client
-1    assistant  tool-call  479     Let me look at the upload client first.
-2    system     message    114     New skills are available…
-TOTAL 3 entries · 696 tokens  (tokenizer: approximation · approximate)
-```
-
-Lists the live context entry by entry. `--json` emits the same fields as an
-object.
-
-### categorize
-
-Groups the entries into 2–5 categories and writes an editable
-`<name>.categories.json`. Model options: `--categorizer-cmd`, or
-`--base-url/--api-key/--model` (fallbacks `OPENAI_BASE_URL`, `OPENAI_API_KEY`,
-`CTXED_MODEL`).
-
-## Privacy
-
-`overview` and `categorize` send excerpts of the session to the model the
-categorizer is configured to use (the harness's own cheap model by default, or
-whatever `--categorizer-cmd` / `--model` / `--base-url` select). Those excerpts
-leave the machine only if that model is remote. Pass `--no-model` to `overview`
-to skip the categorizer entirely and send nothing.
-
-## Token counts
-
-Counts are estimates by default: one token per four runes, rounded up, labelled
-`estimate`/`approximate`. Name a model or encoding for a real tokenizer:
-
-```sh
-ctxed inspect session.json --model gpt-4o
-ctxed overview --tokenizer cl100k_base
-```
-
-## Pruning is parked
-
-Earlier versions dropped topics from a live session (`drop`, `prune`,
-`compact-instruction`, `ctxed opencode`, an OpenCode plugin, and prune skills).
-Compaction in both harnesses could bring dropped content back, so that path is
-parked: the code and its tests stay in the tree, but no command, skill or
-plugin reaches it. See [`parked/`](parked/) and
-`openspec/changes/context-overview`.
+**Token counts** are estimates (one token per four runes) labelled `estimate`.
+Name a model or encoding for a real tokenizer: `--model gpt-4o`,
+`--tokenizer cl100k_base`.
 
 ## Exit codes
 
@@ -153,10 +70,11 @@ plugin reaches it. See [`parked/`](parked/) and
 ## Development
 
 ```sh
-go test ./...                                    # offline, deterministic
-scripts/verify-functionally.sh --all             # real Claude Code + OpenCode sessions, cheap models
-CTXED_TEST_TIKTOKEN=1 go test ./internal/tokenize/
+go test ./...                            # offline, deterministic
+scripts/verify-functionally.sh --all     # real Claude Code + OpenCode sessions, cheap models
 ```
 
 Test fixtures under `testdata/` are trimmed, schema-faithful samples of a real
 OpenCode export and a real Claude Code transcript.
+
+See [`docs/adapters.md`](docs/adapters.md) for the session-format boundary.

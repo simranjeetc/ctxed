@@ -56,9 +56,9 @@ func RunContext(ctx context.Context, args []string, stdin io.Reader, stdout, std
 		return ExitUsage
 	}
 	switch args[0] {
-	// Pruning (drop, prune, compact-instruction, opencode) is parked: its code
-	// stays in this package but no command reaches it. See
-	// openspec/changes/context-overview.
+	// Pruning (drop, prune, compact-instruction, opencode) is parked behind the
+	// `parked` build tag: the code stays in this package but no command in the
+	// default build reaches it.
 	case "overview":
 		return runOverview(ctx, args[1:], stdout, stderr)
 	case "inspect":

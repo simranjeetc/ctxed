@@ -2,10 +2,16 @@ version: 2
 
 project_name: ctxed
 
+before:
+  hooks:
+    - go mod tidy
+
 builds:
   - id: ctxed
     main: ./cmd/ctxed
     binary: ctxed
+    env:
+      - CGO_ENABLED=0
     goos:
       - linux
       - darwin
@@ -13,4 +19,25 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -X github.com/simranjeetc/ctxed/internal/cli.version={{.Version}}
+      - -s -w -X github.com/simranjeetc/ctxed/internal/cli.version={{.Version}}
+
+archives:
+  - id: ctxed
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - skills/**/*
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
