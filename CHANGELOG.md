@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the release's `checksums.txt`. `--check` reports without installing; `--force`
   reinstalls.
 
+### Changed
+
+- README documents only `overview` and `update`; `inspect` and `categorize`
+  remain available but undocumented.
+
 ## [0.1.0] - 2026-10-08
 
 ### Added

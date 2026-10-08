@@ -32,9 +32,6 @@ nothing in the request path.
 
 ```
 ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--max-categories N] [--no-model]
-ctxed inspect <session> [--json] [--model M] [--tokenizer ENC]
-ctxed categorize <session> [--model M] [--base-url URL] [--api-key K]
-                 [--categorizer-cmd CMD] [--max-categories N] [--out FILE]
 ctxed update [--check] [--force]
 ```
 
@@ -44,19 +41,18 @@ ctxed update [--check] [--force]
 | Command | What it does |
 | --- | --- |
 | `overview` | Topics in the live context, each with messages, tokens, share and status, plus what is still pending. The reason to use ctxed. |
-| `inspect` | Every live entry: index, role, kind, tokens, first-line preview. The raw rows `overview` sums. |
-| `categorize` | Group entries into 2–5 categories and write an editable `<name>.categories.json`. |
 | `update` | Replace the binary with the latest release, verified against `checksums.txt`. `--check` only reports; `--force` reinstalls. |
 
 **Live context only.** Entries after the last compaction; the compaction is its
 own row (Claude Code's summary, or OpenCode's summary plus the kept tail). Every
-live message lands in exactly one row, and the totals match `ctxed inspect`.
+live message lands in exactly one row, and the row totals sum to the session
+total.
 
 **No model call:** `overview --no-model` skips the categorizer and prints the
-whole-session sizes as one row, sending nothing anywhere. `overview` and
-`categorize` otherwise send excerpts to the categorizer (the harness's own cheap
-model by default, or whatever `--categorizer-cmd` / `--model` / `--base-url`
-select). Those excerpts leave the machine only if that model is remote.
+whole-session sizes as one row, sending nothing anywhere. `overview` otherwise
+sends excerpts to the categorizer (the harness's own cheap model by default, or
+whatever `--categorizer-cmd` / `--model` / `--base-url` select). Those excerpts
+leave the machine only if that model is remote.
 
 **Token counts** are estimates (one token per four runes) labelled `estimate`.
 Name a model or encoding for a real tokenizer: `--model gpt-4o`,
