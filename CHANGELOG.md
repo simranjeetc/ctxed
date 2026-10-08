@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- README documents only `overview` and `update`; `inspect` and `categorize`
-  remain available but undocumented.
+- README is skill-first: it shows how to ask for the overview and how to read
+  the output. It no longer lists CLI commands or flags.
+- The full command-line reference moved to `docs/cli.md`.
 
 ## [0.1.0] - 2026-10-08
 

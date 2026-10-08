@@ -9,62 +9,60 @@ in Claude Code and OpenCode. Read-only — ctxed never changes a session.
 ![ctxed overview in Claude Code](docs/overview-claude.png)
 ![ctxed overview in OpenCode](docs/overview-opencode.png)
 
+## Use it
+
+Ask your agent:
+
+> what's in my context?
+
+or invoke the skill directly with `/ctxed-overview`. The agent runs `ctxed
+overview` and shows the table as printed.
+
+```
+Session 7f3c9a21-… · live context: 37 messages · ~16.7k tokens (estimate)
+
+ #   Topic                          Msgs   Tokens  Share  Status
+ 1   Auth middleware refactor          12     5.0k    30%  in progress
+ 2   Test fixtures and CI               9     3.8k    22%  done
+ 3   Docs and screenshots               8     3.3k    20%  in progress
+ 4   Token-refresh race                 7     2.9k    17%  done
+     Compaction summary                 1     1.7k    10%  —
+
+Pending: Finish the docs pass; Decide whether to unpark prune
+
+Not counted: 12 messages from before the last compaction.
+```
+
 ## Install
 
 ```sh
 curl -fsSL https://github.com/simranjeetc/ctxed/releases/latest/download/install.sh | sh
 ```
 
-Installs the `ctxed` binary and the `ctxed-overview` skill for Claude Code and
-OpenCode. Update later with `ctxed update`. Prefer Go?
-`go install github.com/simranjeetc/ctxed/cmd/ctxed@latest`.
+Installs the `ctxed-overview` skill for Claude Code and OpenCode. Restart
+OpenCode after installing — it loads skills at start.
 
-## Inside a session: the `ctxed-overview` skill
+## What you're looking at
 
-One skill, [`skills/ctxed-overview/`](skills/ctxed-overview/), for both
-harnesses. Ask *"what's in my context?"* (or `/ctxed-overview`); the agent runs
-`ctxed overview` and shows the table as printed. It resolves the session from the
-harness it runs in — `CLAUDE_CODE_SESSION_ID` → `~/.claude/projects/*/<id>.jsonl`,
-`OPENCODE_SESSION_ID` → `opencode session export <id>`. There is no plugin and
-nothing in the request path.
-
-## Usage
-
-```
-ctxed overview [<session>] [--session ID] [--json] [--categorizer-cmd CMD] [--max-categories N] [--no-model]
-ctxed update [--check] [--force]
-```
-
-`<session>` is a Claude Code transcript (`.jsonl`) or an OpenCode export
-(`opencode session export <id> > s.json`).
-
-| Command | What it does |
+| Column | Meaning |
 | --- | --- |
-| `overview` | Topics in the live context, each with messages, tokens, share and status, plus what is still pending. The reason to use ctxed. |
-| `update` | Replace the binary with the latest release, verified against `checksums.txt`. `--check` only reports; `--force` reinstalls. |
+| Topic | A group of related messages, named by a cheap model call |
+| Msgs | Messages in that topic |
+| Tokens | Estimated size (roughly one token per four characters) |
+| Share | Fraction of the live context |
+| Status | `done`, `in progress`, or `—` for the compaction row |
 
-**Live context only.** Entries after the last compaction; the compaction is its
-own row (Claude Code's summary, or OpenCode's summary plus the kept tail). Every
-live message lands in exactly one row, and the row totals sum to the session
-total.
+- **Live context only** — the entries after the last compaction. The compaction
+  is its own row; *Not counted* is the history it replaced.
+- **Pending** — what the session had left open at the time.
+- Names and counts are the model's reading of the session, so treat them as a
+  good estimate, not exact bookkeeping.
 
-**No model call:** `overview --no-model` skips the categorizer and prints the
-whole-session sizes as one row, sending nothing anywhere. `overview` otherwise
-sends excerpts to the categorizer (the harness's own cheap model by default, or
-whatever `--categorizer-cmd` / `--model` / `--base-url` select). Those excerpts
-leave the machine only if that model is remote.
+## Privacy
 
-**Token counts** are estimates (one token per four runes) labelled `estimate`.
-Name a model or encoding for a real tokenizer: `--model gpt-4o`,
-`--tokenizer cl100k_base`.
-
-## Exit codes
-
-| Code | Meaning |
-| --- | --- |
-| 0 | success (also when only the topic names were unavailable) |
-| 1 | runtime error (missing file or transcript, unrecognized format) |
-| 2 | usage error (no session, ambiguous session, unsafe session id) |
+Names the topics from a sample of the session. That sample leaves the machine
+only if the model the agent uses for it is remote; with a local model, nothing
+does.
 
 ## Development
 
@@ -73,7 +71,4 @@ go test ./...                            # offline, deterministic
 scripts/verify-functionally.sh --all     # real Claude Code + OpenCode sessions, cheap models
 ```
 
-Test fixtures under `testdata/` are trimmed, schema-faithful samples of a real
-OpenCode export and a real Claude Code transcript.
-
-See [`docs/adapters.md`](docs/adapters.md) for the session-format boundary.
+Command-line reference (every command and flag): [`docs/cli.md`](docs/cli.md).
