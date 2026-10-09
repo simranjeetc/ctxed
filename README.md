@@ -58,12 +58,6 @@ OpenCode after installing — it loads skills at start.
 - Names and counts are the model's reading of the session, so treat them as a
   good estimate, not exact bookkeeping.
 
-## Privacy
-
-Names the topics from a sample of the session. That sample leaves the machine
-only if the model the agent uses for it is remote; with a local model, nothing
-does.
-
 ## Development
 
 ```sh
