@@ -27,7 +27,7 @@ verifiers**, each owning one harness and runnable in parallel.
 | --- | --- | --- |
 | Entry point | `scripts/verify-functionally.sh --opencode` | `scripts/verify-functionally.sh --claude` |
 | Harness | `opencode` (OpenCode Go entitled) | `claude` (Haiku) |
-| Default model | `opencode-go/deepseek-v4-flash` | `haiku` |
+| Default model | `opencode-go/deepseek-v4.1-flash` | `haiku` |
 | Report | `--report <path>` writes JSON | `--report <path>` writes JSON |
 
 The script is harness-agnostic: it is the source of truth. An **agent brief** is
@@ -79,7 +79,7 @@ build tag); they cannot run against the current binary.
 Each verifier writes JSON via `--report <path>`:
 
 ```json
-{ "suite": "opencode", "model": "opencode-go/deepseek-v4-flash",
+{ "suite": "opencode", "model": "opencode-go/deepseek-v4.1-flash",
   "passed": 5, "failed": 0, "softPassed": 1, "softFailed": 1, "ok": true,
   "checks": [ { "status": "pass", "name": "opencode:prune --ids-only", "detail": "" },
               { "status": "soft-fail", "name": "opencode:post-selection recall", "detail": "reply: …" } ] }
@@ -106,7 +106,7 @@ Prerequisites, each reported by name if missing:
 Configuration (optional, with defaults):
 
 ```sh
-CTXED_TEST_OPENCODE_MODEL=opencode-go/deepseek-v4-flash
+CTXED_TEST_OPENCODE_MODEL=opencode-go/deepseek-v4.1-flash
 CTXED_TEST_CLAUDE_MODEL=haiku
 CTXED_TEST_KEEP=1        # keep scratch on failure
 CTXED_TEST_EXTRA_PATH=   # prepended to PATH, for tools installed off-PATH

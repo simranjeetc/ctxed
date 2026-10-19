@@ -21,7 +21,7 @@ checkout; a feature missing from it is a failure, not a skip:
 Prerequisites (the script reports any that are missing, by name):
   - `opencode` on PATH, authenticated, with an OpenCode Go model entitled
   - node and npm (to bundle the plugin), Go toolchain, python3, curl, lsof
-Model default: opencode-go/deepseek-v4-flash (override: CTXED_TEST_OPENCODE_MODEL)
+Model default: opencode-go/deepseek-v4.1-flash (override: CTXED_TEST_OPENCODE_MODEL)
 Tools off PATH: set CTXED_TEST_EXTRA_PATH.
 
 Then: read /tmp/verify-opencode.json and report `ok`, the model used, and any
