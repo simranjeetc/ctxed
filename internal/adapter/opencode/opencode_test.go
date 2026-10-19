@@ -58,6 +58,59 @@ func TestParseEntries(t *testing.T) {
 	}
 }
 
+// doc.Model comes from the export's info.model. The reference OpenCode accepts
+// is providerID/id; the variant is not part of it, and a missing/blank model is
+// reported as empty, never defaulted here.
+func TestParseModel(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "providerID over id, variant dropped",
+			data: `{"info":{"model":{"id":"X","providerID":"P","variant":"V"}},"messages":[]}`,
+			want: "P/X",
+		},
+		{
+			name: "info without a model key",
+			data: `{"info":{"id":"ses_1"},"messages":[]}`,
+			want: "",
+		},
+		{
+			name: "model with empty id",
+			data: `{"info":{"model":{"id":"","providerID":"P"}},"messages":[]}`,
+			want: "",
+		},
+		{
+			name: "model with empty providerID",
+			data: `{"info":{"model":{"id":"X","providerID":""}},"messages":[]}`,
+			want: "X",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := (&opencode.Adapter{}).Parse([]byte(tc.data))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if doc.Model != tc.want {
+				t.Fatalf("Model = %q, want %q", doc.Model, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseModelFromFixture(t *testing.T) {
+	doc, err := (&opencode.Adapter{}).Parse(readFixture(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if doc.Model != "opencode-go/deepseek-v4.1-flash" {
+		t.Fatalf("Model = %q, want %q", doc.Model, "opencode-go/deepseek-v4.1-flash")
+	}
+}
+
 func TestRoundTripReparses(t *testing.T) {
 	a := &opencode.Adapter{}
 	doc, _ := a.Parse(readFixture(t))
