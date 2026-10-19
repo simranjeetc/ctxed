@@ -288,6 +288,32 @@ func TestOverviewUsesClaudeSessionModel(t *testing.T) {
 	}
 }
 
+// Rung 4 beats rung 5 end to end: with no override anywhere, a session that
+// records a model must make `ctxed overview` hand *that* model to the harness
+// CLI even when the harness config records a different one. Swapping rungs 4
+// and 5 in resolve.go turns this test red.
+func TestOverviewSessionModelBeatsConfiguredDefault(t *testing.T) {
+	clearModelTestEnv(t)
+	bin, logPath := fakeOpenCode(t, answerOneTopic)
+	t.Setenv("CTXED_OPENCODE_BIN", bin)
+	cfg := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte(`{"model":"configured/default"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	session := openCodeSession(t, "prov/session-model")
+
+	r, out := overviewFor(t, session)
+	if got := usedModel(t, logPath); got != "prov/session-model" {
+		t.Fatalf("used model %q, want the session's model (rung 4) over the configured default (rung 5)", got)
+	}
+	if !hasTopic(r, "Session topic") {
+		t.Fatalf("no topics came back:\n%s", out)
+	}
+}
+
 // A categorizer command still wins outright: no model is needed, and the
 // harness CLI is never invoked.
 func TestOverviewCategorizerCmdWinsWithoutModel(t *testing.T) {
