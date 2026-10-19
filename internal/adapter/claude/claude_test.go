@@ -55,6 +55,55 @@ func TestParseEntries(t *testing.T) {
 	}
 }
 
+// doc.Model is the model on the session's latest assistant turn; only assistant
+// lines count, and a transcript with none reports empty rather than a default.
+func TestParseModel(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "last assistant model wins",
+			data: `{"type":"assistant","uuid":"a1","message":{"role":"assistant","model":"model-one","content":"first"}}` + "\n" +
+				`{"type":"assistant","uuid":"a2","message":{"role":"assistant","model":"model-two","content":"second"}}`,
+			want: "model-two",
+		},
+		{
+			name: "assistant lines carry no model",
+			data: `{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":"first"}}` + "\n" +
+				`{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":"second"}}`,
+			want: "",
+		},
+		{
+			name: "user model is ignored",
+			data: `{"type":"user","uuid":"u1","message":{"role":"user","model":"user-model","content":"prompt"}}`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := (&claude.Adapter{}).Parse([]byte(tc.data))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if doc.Model != tc.want {
+				t.Fatalf("Model = %q, want %q", doc.Model, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseModelFromFixture(t *testing.T) {
+	doc, err := (&claude.Adapter{}).Parse(readFixture(t))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if doc.Model != "claude-sonnet-5" {
+		t.Fatalf("Model = %q, want %q", doc.Model, "claude-sonnet-5")
+	}
+}
+
 func TestNonEntryLinePreservedOnWrite(t *testing.T) {
 	a := &claude.Adapter{}
 	doc, _ := a.Parse(readFixture(t))

@@ -14,9 +14,6 @@ import (
 	"strings"
 )
 
-// ClaudeModel is the categorizer model when none is configured.
-const ClaudeModel = "haiku"
-
 var claudeSessionRe = regexp.MustCompile(`^[0-9a-fA-F-]{8,64}$`)
 
 // ErrBadClaudeSession reports a session id that cannot safely name a file.
@@ -84,6 +81,9 @@ func isFile(p string) bool {
 
 // ClaudePrint categorizes through `claude -p`: no tools, nothing saved, the
 // prompt on stdin.
+//
+// Model is the resolved categorizer model. It is never defaulted here: an empty
+// Model omits --model and lets Claude Code use the model configured for itself.
 type ClaudePrint struct{ Model string }
 
 // Complete sends the prompt to `claude -p` and returns its response.
@@ -95,20 +95,26 @@ func (c ClaudePrint) Complete(ctx context.Context, prompt string) (string, error
 			return "", fmt.Errorf("claude binary not found; set CTXED_CLAUDE_BIN")
 		}
 	}
-	model := c.Model
-	if model == "" {
-		model = ClaudeModel
+	model := strings.TrimSpace(c.Model)
+	label := model
+	if label == "" {
+		label = "harness default"
 	}
+	args := []string{"-p"}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, "--no-session-persistence", "--tools", "")
 	var out, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, bin, "-p", "--model", model, "--no-session-persistence", "--tools", "")
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude -p (%s): %w: %s", model, err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("claude -p (%s): %w: %s", label, err, strings.TrimSpace(stderr.String()))
 	}
 	if strings.TrimSpace(out.String()) == "" {
-		return "", fmt.Errorf("claude -p (%s) returned no text", model)
+		return "", fmt.Errorf("claude -p (%s) returned no text", label)
 	}
 	return out.String(), nil
 }

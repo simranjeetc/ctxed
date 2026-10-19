@@ -34,7 +34,7 @@
 #
 # Configuration (all optional):
 #   CTXED_TEST_EXTRA_PATH       prepended to PATH, for tools installed off-PATH
-#   CTXED_TEST_OPENCODE_MODEL   default opencode-go/deepseek-v4-flash
+#   CTXED_TEST_OPENCODE_MODEL   default opencode-go/deepseek-v4.1-flash
 #   CTXED_TEST_CLAUDE_MODEL     default haiku
 #   CTXED_TEST_KEEP=1           same as --keep
 
@@ -49,7 +49,7 @@ cd "$ROOT"
 # for OpenCode, so a silent fallback to whatever `opencode models` lists first
 # (e.g. github-copilot/…) would fail on a fresh clone. Pin an explicit default
 # and fail loudly if it cannot be resolved.
-OPENCODE_MODEL="${CTXED_TEST_OPENCODE_MODEL:-opencode-go/deepseek-v4-flash}"
+OPENCODE_MODEL="${CTXED_TEST_OPENCODE_MODEL:-opencode-go/deepseek-v4.1-flash}"
 CLAUDE_MODEL="${CTXED_TEST_CLAUDE_MODEL:-haiku}"
 KEEP="${CTXED_TEST_KEEP:-0}"
 

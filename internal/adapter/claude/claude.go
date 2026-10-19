@@ -89,6 +89,7 @@ type line struct {
 	IsCompactSummary bool   `json:"isCompactSummary"`
 	Message          *struct {
 		Role    string          `json:"role"`
+		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	CompactMetadata *struct {
@@ -137,7 +138,14 @@ func (a *Adapter) Parse(data []byte) (*session.Document, error) {
 	for i, raw := range raws {
 		doc.Lines = append(doc.Lines, session.RawLine{Raw: raw, EntryIndex: -1})
 		l := parsed[i]
-		if l == nil || l.Message == nil || !isEntry(l.Type) {
+		if l == nil {
+			continue
+		}
+		// The session's model is the model of its latest assistant turn.
+		if l.Type == "assistant" && l.Message != nil && strings.TrimSpace(l.Message.Model) != "" {
+			doc.Model = strings.TrimSpace(l.Message.Model)
+		}
+		if l.Message == nil || !isEntry(l.Type) {
 			continue
 		}
 		if i < boundary && !preserved[l.UUID] {

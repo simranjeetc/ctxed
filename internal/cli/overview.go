@@ -30,7 +30,7 @@ func runOverview(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	maxInput := fs.Int("max-input-bytes", 30000, "target prompt size in bytes")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	noModel := fs.Bool("no-model", false, "skip the categorizer; print only the whole-session sizes")
-	modelName := fs.String("model", "", "model name, for tokenizer selection")
+	modelName := fs.String("model", "", "model that names the topics; also selects the tokenizer")
 	encoding := fs.String("tokenizer", "", "tokenizer encoding name")
 	flags, rest := splitArgs(args, valueFlagsOverview)
 	if err := fs.Parse(flags); err != nil {
@@ -66,10 +66,10 @@ func runOverview(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if !*noModel {
 		topics := overview.Topics(doc)
 		if len(topics.Entries) >= 2 {
-			f, err = categorizeTopics(ctx, topics, doc.Source, *cmd, *maxCats, *maxInput, tok)
+			f, err = categorizeTopics(ctx, topics, doc.Source, *cmd, *modelName, *maxCats, *maxInput, tok)
 			if err != nil {
 				// The sizes are still worth showing; only the topic names are missing.
-				_, _ = fmt.Fprintf(stderr, "ctxed overview: topics unavailable: %v\n", err)
+				_, _ = fmt.Fprintf(stderr, "ctxed overview: topics unavailable (%v)\n", err)
 				f = categorize.File{}
 			}
 		}
@@ -133,24 +133,40 @@ func findSession(ctx context.Context, file, id string, stderr io.Writer) (sessio
 }
 
 // categorizeTopics asks a model to group the entries into topics. The model is
-// --categorizer-cmd, else $CTXED_CATEGORIZER_CMD, else the harness's own CLI
-// (`claude -p` or `opencode run`) with $CTXED_CATEGORIZER_MODEL.
-func categorizeTopics(ctx context.Context, doc *session.Document, source, cmd string, maxCats, maxInput int, tok tokenize.Tokenizer) (categorize.File, error) {
+// --categorizer-cmd, else $CTXED_CATEGORIZER_CMD (both win outright, no model
+// needed); otherwise it is resolved first-hit-wins from --model,
+// $CTXED_CATEGORIZER_MODEL, $CTXED_MODEL, the session's own model, and the
+// harness's configured default. The harness's own CLI (`opencode run` or
+// `claude -p`) makes the call.
+func categorizeTopics(ctx context.Context, doc *session.Document, source, cmd, flagModel string, maxCats, maxInput int, tok tokenize.Tokenizer) (categorize.File, error) {
 	var client model.Client
+	var label string
 	if c := envOr(cmd, "CTXED_CATEGORIZER_CMD"); strings.TrimSpace(c) != "" {
 		var err error
 		if client, err = model.Resolve(model.Config{Command: c}); err != nil {
 			return categorize.File{}, err
 		}
-	} else if source == "opencode" {
-		client = harness.OpenCodeRun{Model: os.Getenv("CTXED_CATEGORIZER_MODEL")}
 	} else {
-		client = harness.ClaudePrint{Model: os.Getenv("CTXED_CATEGORIZER_MODEL")}
+		res, err := harness.ResolveCategorizerModel(flagModel, doc.Model, source)
+		if err != nil {
+			return categorize.File{}, err
+		}
+		label = res.Model
+		if source == "opencode" {
+			client = harness.OpenCodeRun{Model: res.Model}
+		} else {
+			client = harness.ClaudePrint{Model: res.Model}
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	text, err := client.Complete(ctx, categorize.Prompt(doc, maxCats, maxInput))
 	if err != nil {
+		if label != "" {
+			// Name the model that was used, and keep the harness's own error
+			// (including any stderr it printed) intact.
+			return categorize.File{}, fmt.Errorf("model %s: %w", label, err)
+		}
 		return categorize.File{}, err
 	}
 	return categorize.Parse(text, doc, tok, maxCats)

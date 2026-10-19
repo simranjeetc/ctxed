@@ -39,6 +39,7 @@ changes nothing.
 - Do not suggest or carry out dropping topics; deciding what to do next is the
   user's call.
 - If ctxed exits with an error, show the error as printed and stop. If it prints
-  "topics unavailable", the sizes are still correct; say so in one line.
+  "topics unavailable", the sizes are still correct; say so in one line and show
+  the model named in the error — do not try another model yourself.
 - The transcript can lag the conversation by a turn; the newest message may be
   missing from the counts.
