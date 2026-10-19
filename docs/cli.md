@@ -44,11 +44,34 @@ what is still pending. Read-only.
 | `--max-categories N` | maximum topics (default 5) |
 | `--max-input-bytes N` | target prompt size; the session is sampled to fit (default 30000) |
 | `--no-model` | skip the categorizer; print the whole-session sizes as one row, sending nothing to a model |
-| `--model M`, `--tokenizer ENC` | use a real tokenizer instead of the estimate |
+| `--model M` | model that names the topics, and the tokenizer to use (see below) |
+| `--tokenizer ENC` | use a real tokenizer instead of the estimate |
 
 Every live entry lands in exactly one row, and the row totals sum to the session
 total. If the model call fails, the sizes still print as one row and the error
-goes to stderr.
+goes to stderr, naming the model that was used and the harness's own message.
+
+### Which model names the topics
+
+`--categorizer-cmd` / `$CTXED_CATEGORIZER_CMD` wins outright: when either is
+set, no model is needed. Otherwise the model is resolved first hit wins:
+
+1. `--model M`;
+2. `$CTXED_CATEGORIZER_MODEL`;
+3. `$CTXED_MODEL`;
+4. the model recorded on the session being inspected (OpenCode `info.model`,
+   Claude Code `message.model` on the latest assistant turn);
+5. the harness's configured default — OpenCode
+   `~/.config/opencode/opencode.json` → `model`, Claude Code
+   `~/.claude/settings.json` → `model`;
+6. if none of those resolve, `overview` reports the error, naming every source
+   it tried, and still prints the token sizes.
+
+There is no built-in model name: a session with no recorded model and no
+configuration never silently uses a provider/model the binary shipped with.
+
+`--model` still selects the tokenizer for the sizes; the tokenizer is not
+influenced by the resolved topic model.
 
 ## inspect
 
@@ -105,9 +128,9 @@ harness it finds (Claude Code at `~/.claude`, OpenCode at `~/.config/opencode`).
 | Variable | Used by |
 | --- | --- |
 | `CTXED_CATEGORIZER_CMD` | `overview`, `categorize` — categorizer command |
-| `CTXED_CATEGORIZER_MODEL` | `overview` — model for the harness's own CLI |
+| `CTXED_CATEGORIZER_MODEL` | `overview` — model for the harness's own CLI (wins over `CTXED_MODEL` and the session's model) |
 | `CTXED_CLAUDE_BIN`, `CTXED_OPENCODE_BIN` | `overview` — path to the harness CLI |
-| `CTXED_MODEL` | `categorize` — model name fallback |
+| `CTXED_MODEL` | `overview`, `categorize` — model name fallback |
 | `OPENAI_BASE_URL`, `OPENAI_API_KEY` | `categorize` — endpoint fallback |
 | `CLAUDE_CODE_SESSION_ID`, `OPENCODE_SESSION_ID` | `overview` — session in use |
 

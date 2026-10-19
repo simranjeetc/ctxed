@@ -107,6 +107,13 @@ type Document struct {
 	Format  Format
 	Entries []*Entry
 
+	// Model is the model the session itself runs on, as the harness recorded
+	// it: an OpenCode export's info.model (providerID/id), or the model on a
+	// Claude Code transcript's last assistant message. Empty when the harness
+	// recorded none. It is never a default; callers resolve what to do with an
+	// empty value.
+	Model string
+
 	// Compacted counts conversation entries before the last compaction: kept
 	// verbatim on write, but no longer seen by the model, so never an Entry.
 	Compacted int

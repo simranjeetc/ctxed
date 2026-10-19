@@ -84,6 +84,7 @@ func (a *Adapter) Parse(data []byte) (*session.Document, error) {
 	}
 
 	doc := &session.Document{Source: a.Name(), Format: session.FormatJSON, Top: top, EntriesKey: "messages"}
+	doc.Model = exportModel(top["info"])
 	msgs := make([]message, len(arr))
 	last := -1
 	for i, raw := range arr {
@@ -143,6 +144,32 @@ func (a *Adapter) Write(doc *session.Document) ([]byte, error) {
 }
 
 func isEntry(t string) bool { return t == "user" || t == "assistant" || t == "system" }
+
+// exportModel reads the model recorded on an export's info object:
+// {"model":{"id":"…","providerID":"…","variant":"…"}}. The reference OpenCode
+// accepts on the command line is providerID/id; the variant is not part of it.
+func exportModel(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var info struct {
+		Model struct {
+			ID         string `json:"id"`
+			ProviderID string `json:"providerID"`
+		} `json:"model"`
+	}
+	if json.Unmarshal(raw, &info) != nil {
+		return ""
+	}
+	id, provider := strings.TrimSpace(info.Model.ID), strings.TrimSpace(info.Model.ProviderID)
+	switch {
+	case id == "":
+		return ""
+	case provider == "":
+		return id
+	}
+	return provider + "/" + id
+}
 
 func extract(m message) (string, session.Kind, []string, []string) {
 	var b strings.Builder
