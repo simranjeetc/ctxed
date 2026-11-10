@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   → `$CTXED_MODEL` → the session's recorded model → the harness's configured default.
   With none, `overview` names every source it tried and still prints sizes (#6).
 - README: refreshed Claude Code and OpenCode screenshots; added How it works and
-  Design choices (#5).
+  Design choices (#5, #7).
 
 ### Dependencies
 
